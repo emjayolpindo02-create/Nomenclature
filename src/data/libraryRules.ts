@@ -1,0 +1,667 @@
+import { LibraryRuleContent } from '../types/chemistry';
+
+export const LIBRARY_RULES: LibraryRuleContent[] = [
+  {
+    id: 'writing-chemical-formulas',
+    title: 'Writing Chemical Formulas',
+    ruleSentence: 'Write the positive ion (cation) first, exchange charges across as subscripts using criss-cross, simplify ratios, and protect polyatomic ions with parentheses when their subscript exceeds 1.',
+    howToNameSteps: [
+      'Write the positive cation symbol first with its charge, followed by the negative anion symbol with its charge.',
+      'Criss-cross the numerical values: cation charge becomes the anion subscript, and anion charge becomes the cation subscript.',
+      'Drop the positive/negative signs when writing subscripts. Omit subscript 1 completely.',
+      'Reduce subscripts to the lowest whole-number ratio (e.g. Ca₂O₂ reduces to CaO). NEVER change subscripts inside a polyatomic ion.',
+      'If a polyatomic ion receives a subscript greater than 1, enclose the entire polyatomic ion in parentheses (e.g. Ca₃(PO₄)₂).',
+    ],
+    howToReadSteps: [
+      'Look at the first element/group to identify the cation.',
+      'Look at the second element/group to identify the anion.',
+      'Check whether subscripts were reduced from higher charges (e.g. in MgO, Mg is +2 and O is -2, reduced from 2:2 to 1:1).',
+    ],
+    examples: [
+      {
+        formula: 'Ca3(PO4)2',
+        iupacName: 'calcium phosphate',
+        explanation: 'Calcium has charge +2 and phosphate has charge -3. Criss-crossing gives Ca₃(PO₄)₂. Because phosphate is polyatomic and gets subscript 2, it must be enclosed in parentheses.',
+        elementsInvolved: ['Ca', 'P', 'O'],
+        parts: [
+          { text: 'calcium', type: 'metal' },
+          { text: ' ', type: 'neutral' },
+          { text: 'phosphate', type: 'ending' },
+        ],
+      },
+      {
+        formula: 'Al2O3',
+        iupacName: 'aluminum oxide',
+        explanation: 'Aluminum has charge +3 and oxide has charge -2. Criss-crossing the values gives Al₂O₃. Neither subscript can be reduced further.',
+        elementsInvolved: ['Al', 'O'],
+        parts: [
+          { text: 'aluminum', type: 'metal' },
+          { text: ' ', type: 'neutral' },
+          { text: 'oxide', type: 'ending' },
+        ],
+      },
+      {
+        formula: 'SnO2',
+        iupacName: 'tin (IV) oxide',
+        traditionalName: 'stannic oxide',
+        explanation: 'Tin has charge +4 and oxide has charge -2. Criss-crossing gives Sn₂O₄. Reducing the 2:4 ratio by dividing by 2 yields the final empirical formula SnO₂.',
+        elementsInvolved: ['Sn', 'O'],
+        parts: [
+          { text: 'tin', type: 'metal' },
+          { text: ' (', type: 'neutral' },
+          { text: 'IV', type: 'oxidation' },
+          { text: ') ', type: 'neutral' },
+          { text: 'oxide', type: 'ending' },
+        ],
+      },
+    ],
+    commonMistakes: [
+      {
+        mistake: 'Writing Ca₂(SO₄)₂ or Mg₂(O)₂ without simplifying.',
+        correction: 'Always simplify ionic subscripts to the lowest ratio: CaSO₄ and MgO.',
+        why: 'Ionic formulas express the empirical formula (simplest ratio of formula units in a crystal lattice).',
+      },
+      {
+        mistake: 'Modifying the internal numbers of a polyatomic ion, like changing NO₃ to NO₂ during simplification.',
+        correction: 'Never alter the internal formula of a polyatomic ion. Only change the outer multiplier.',
+        why: 'Changing the internal subscripts alters the chemical identity of the ion itself.',
+      },
+    ],
+    rememberTips: [
+      'Analogy: Think of parentheses as bubble-wrap protecting the polyatomic ion family before multiplying them.',
+      'Subscript "1" is invisible ink: chemists never write a subscript of 1.',
+    ],
+    cheatSheet: {
+      header: 'Criss-Cross Formula Protocol',
+      items: [
+        { label: 'Order', value: 'Cation (+) always on the left, Anion (-) on the right' },
+        { label: 'Criss-Cross', value: 'Charge magnitude drops diagonally to become opposite subscript' },
+        { label: 'Subscript 1', value: 'Never written (Na₁Cl₁ is written as NaCl)' },
+        { label: 'Simplification', value: 'Reduce by GCD (e.g., 2:2 -> 1:1, 2:4 -> 1:2)' },
+        { label: 'Parentheses Rule', value: 'Required only when polyatomic ion count is ≥ 2' },
+      ],
+    },
+  },
+  {
+    id: 'metal-one-oxidation-nonmetal',
+    title: 'Metal with One Oxidation Number + Nonmetal',
+    ruleSentence: 'State the plain name of the metal, then state the nonmetal stem with an "-ide" ending.',
+    howToNameSteps: [
+      'Write the full English name of the metal (cation) without modifying it.',
+      'Identify the nonmetal partner and shorten it to its root stem (e.g., chlor-, ox-, sulf-, nitr-).',
+      'Attach the "-ide" suffix directly to the nonmetal root stem.',
+      'Do NOT use Roman numerals (the charge is fixed and unambiguous). Do NOT use Greek prefixes (no mono-, di-, etc. in ionic compounds).',
+    ],
+    howToReadSteps: [
+      'Read the first word to find the metal on the periodic table.',
+      'Strip the "-ide" from the second word to identify the parent nonmetal element.',
+      'Verify the ionic charges to reconstruct the balanced formula.',
+    ],
+    examples: [
+      {
+        formula: 'ZnS',
+        iupacName: 'zinc sulfide',
+        explanation: 'Zinc (Zn) is a metal with a single fixed oxidation state (+2). Sulfur (S) is the nonmetal with root stem "sulf-". Adding "-ide" yields zinc sulfide.',
+        elementsInvolved: ['Zn', 'S'],
+        parts: [
+          { text: 'zinc', type: 'metal' },
+          { text: ' ', type: 'neutral' },
+          { text: 'sulfide', type: 'ending' },
+        ],
+      },
+      {
+        formula: 'Li2O',
+        iupacName: 'lithium oxide',
+        explanation: 'Lithium (Li) is an alkali metal (Group 1A, +1). Oxygen (O) takes the root "ox-" plus "-ide". We do not say "dilithium monoxide" because ionic compounds do not use Greek prefixes.',
+        elementsInvolved: ['Li', 'O'],
+        parts: [
+          { text: 'lithium', type: 'metal' },
+          { text: ' ', type: 'neutral' },
+          { text: 'oxide', type: 'ending' },
+        ],
+      },
+      {
+        formula: 'AlCl3',
+        iupacName: 'aluminum chloride',
+        explanation: 'Aluminum (Al) is a metal with only +3 charge. Chlorine (Cl) takes the root "chlor-" plus "-ide". Result: aluminum chloride.',
+        elementsInvolved: ['Al', 'Cl'],
+        parts: [
+          { text: 'aluminum', type: 'metal' },
+          { text: ' ', type: 'neutral' },
+          { text: 'chloride', type: 'ending' },
+        ],
+      },
+    ],
+    commonMistakes: [
+      {
+        mistake: 'Writing "dilithium monoxide" for Li₂O.',
+        correction: 'Write "lithium oxide". Greek prefixes are strictly reserved for nonmetal-nonmetal covalent compounds.',
+        why: 'In ionic compounds, charges dictate the ratio automatically, making counting prefixes redundant.',
+      },
+      {
+        mistake: 'Adding Roman numerals to fixed metals, like "zinc (II) sulfide".',
+        correction: 'Write "zinc sulfide".',
+        why: 'Roman numerals are only used when a metal has more than one possible oxidation state.',
+      },
+    ],
+    rememberTips: [
+      'Fixed Metals Club: Group 1A (+1), Group 2A (+2), Aluminum (+3), Zinc (+2), and Silver (+1) never use Roman numerals.',
+      'Nonmetal ending formula: Root + "-ide" (Oxygen -> Oxide, Nitrogen -> Nitride, Phosphorus -> Phosphide).',
+    ],
+    cheatSheet: {
+      header: 'Nonmetal Root Stems',
+      items: [
+        { label: 'Fluorine', value: 'fluor + ide = fluoride (F⁻)' },
+        { label: 'Chlorine', value: 'chlor + ide = chloride (Cl⁻)' },
+        { label: 'Bromine', value: 'brom + ide = bromide (Br⁻)' },
+        { label: 'Iodine', value: 'iod + ide = iodide (I⁻)' },
+        { label: 'Oxygen', value: 'ox + ide = oxide (O²⁻)' },
+        { label: 'Sulfur', value: 'sulf + ide = sulfide (S²⁻)' },
+        { label: 'Nitrogen', value: 'nitr + ide = nitride (N³⁻)' },
+        { label: 'Phosphorus', value: 'phosph + ide = phosphide (P³⁻)' },
+      ],
+    },
+  },
+  {
+    id: 'metal-variable-oxidation-nonmetal',
+    title: 'Metal with Variable Oxidation Number + Nonmetal',
+    ruleSentence: 'Specify the metal charge using IUPAC Stock Roman numerals in parentheses or the Traditional Latin stem with "-ous" for the lower state and "-ic" for the higher state.',
+    howToNameSteps: [
+      'Calculate the oxidation number of the metal from the known charge of the nonmetal.',
+      'Stock Method: Write the English name of the metal followed immediately by its oxidation number as a Roman numeral in parentheses, then the nonmetal with "-ide".',
+      'Traditional Method: Take the Latin/historical root of the metal. Append "-ous" for the lower oxidation number or "-ic" for the higher oxidation number, followed by the nonmetal with "-ide".',
+    ],
+    howToReadSteps: [
+      'In Stock names, read the Roman numeral directly as the cation charge (e.g. iron (III) means Fe³⁺).',
+      'In Traditional names, recognize "-ous" as the lower charge and "-ic" as the higher charge for that specific metal.',
+      'Use the charge to balance the formula via criss-cross.',
+    ],
+    examples: [
+      {
+        formula: 'FeS',
+        iupacName: 'iron (II) sulfide',
+        traditionalName: 'ferrous sulfide',
+        explanation: 'Sulfur has a -2 charge, so iron must be +2 to neutralize it. In the Stock system this is iron (II) sulfide. For iron (+2 vs +3), +2 is the lower oxidation state, so the Latin root "ferr-" takes "-ous" = ferrous sulfide.',
+        elementsInvolved: ['Fe', 'S'],
+        parts: [
+          { text: 'iron', type: 'metal' },
+          { text: ' (', type: 'neutral' },
+          { text: 'II', type: 'oxidation' },
+          { text: ') ', type: 'neutral' },
+          { text: 'sulfide', type: 'ending' },
+        ],
+      },
+      {
+        formula: 'Fe2S3',
+        iupacName: 'iron (III) sulfide',
+        traditionalName: 'ferric sulfide',
+        explanation: 'Three sulfurs provide 3 × (-2) = -6 charge, requiring two irons to provide +6, so each iron is +3. This gives iron (III) sulfide. Since +3 is iron\'s higher oxidation state, it takes "-ic" = ferric sulfide.',
+        elementsInvolved: ['Fe', 'S'],
+        parts: [
+          { text: 'iron', type: 'metal' },
+          { text: ' (', type: 'neutral' },
+          { text: 'III', type: 'oxidation' },
+          { text: ') ', type: 'neutral' },
+          { text: 'sulfide', type: 'ending' },
+        ],
+      },
+      {
+        formula: 'Hg2O',
+        iupacName: 'mercury (I) oxide',
+        traditionalName: 'mercurous oxide',
+        explanation: 'One oxygen has a -2 charge, balanced by two mercury atoms, making each mercury +1. In Stock: mercury (I) oxide. Since +1 is lower than +2, the traditional name is mercurous oxide.',
+        elementsInvolved: ['Hg', 'O'],
+        parts: [
+          { text: 'mercury', type: 'metal' },
+          { text: ' (', type: 'neutral' },
+          { text: 'I', type: 'oxidation' },
+          { text: ') ', type: 'neutral' },
+          { text: 'oxide', type: 'ending' },
+        ],
+      },
+    ],
+    commonMistakes: [
+      {
+        mistake: 'Assuming the Roman numeral equals the subscript of the metal.',
+        correction: 'The Roman numeral indicates the ionic CHARGE of the metal, not how many atoms of it exist.',
+        why: 'In Fe₂O₃, the Roman numeral is (III) because the charge of Fe is +3, even though its subscript is 2.',
+      },
+      {
+        mistake: 'Using "-ous" and "-ic" interchangeably without checking which state is lower.',
+        correction: 'Remember: "-ous" is always for the smaller charge; "-ic" is always for the bigger charge.',
+        why: 'Memory rhyme: "Delicious (-ous) is smaller, Terrific (-ic) is bigger!"',
+      },
+    ],
+    rememberTips: [
+      'Core Variable Metals to Master: Cu (+1/+2), Fe (+2/+3), Co (+2/+3), Mn (+2/+4), Hg (+1/+2), Sn (+2/+4), Pb (+2/+4), As (+3/+5), Sb (+3/+5).',
+      'Latin Roots: Iron = Ferr-, Copper = Cupr-, Tin = Stann-, Lead = Plumb-, Mercury = Mercur-.',
+    ],
+    cheatSheet: {
+      header: 'Variable Metal Dual Nomenclature Guide',
+      items: [
+        { label: 'Copper (Cu)', value: '+1 = copper (I) / cuprous; +2 = copper (II) / cupric' },
+        { label: 'Iron (Fe)', value: '+2 = iron (II) / ferrous; +3 = iron (III) / ferric' },
+        { label: 'Cobalt (Co)', value: '+2 = cobalt (II) / cobaltous; +3 = cobalt (III) / cobaltic' },
+        { label: 'Manganese (Mn)', value: '+2 = manganese (II) / manganous; +4 = manganese (IV) / manganic' },
+        { label: 'Mercury (Hg)', value: '+1 = mercury (I) / mercurous; +2 = mercury (II) / mercuric' },
+        { label: 'Tin (Sn)', value: '+2 = tin (II) / stannous; +4 = tin (IV) / stannic' },
+        { label: 'Lead (Pb)', value: '+2 = lead (II) / plumbous; +4 = lead (IV) / plumbic' },
+        { label: 'Arsenic (As)', value: '+3 = arsenic (III) / arsenous; +5 = arsenic (V) / arsenic' },
+        { label: 'Antimony (Sb)', value: '+3 = antimony (III) / antimonous; +5 = antimony (V) / antimonic' },
+      ],
+    },
+  },
+  {
+    id: 'nonmetal-nonmetal',
+    title: 'Nonmetal + Nonmetal',
+    ruleSentence: 'Name molecular compounds using Greek prefixes to indicate the number of atoms, never use "mono-" on the first element, and drop the terminal vowel before "oxide".',
+    howToNameSteps: [
+      'Identify the first element and attach a Greek prefix matching its subscript (EXCEPT omit "mono-" if there is only 1 atom of the first element).',
+      'Identify the second element, always attach a Greek prefix matching its subscript, and end its stem in "-ide".',
+      'Phonetic vowel drop rule: drop the trailing "a" or "o" of a prefix before "oxide" (e.g. monoxide, tetroxide, pentoxide, heptoxide), but keep "di-" and "tri-" (dioxide, trioxide).',
+    ],
+    howToReadSteps: [
+      'Translate the Greek prefixes into numerical subscripts (e.g. "dinitrogen" -> N₂, "pentoxide" -> O₅).',
+      'Assemble the formula in the order named: N₂O₅.',
+      'Never reduce subscripts in covalent compounds (subscripts show real molecular atom counts!).',
+    ],
+    examples: [
+      {
+        formula: 'CO',
+        iupacName: 'carbon monoxide',
+        explanation: 'There is 1 carbon atom, but we never use "mono-" on the first element. The second element has 1 oxygen atom, which takes "mono-" + "oxide", dropping the duplicate "o" to make "monoxide". Result: carbon monoxide.',
+        elementsInvolved: ['C', 'O'],
+        parts: [
+          { text: 'carbon', type: 'metal' },
+          { text: ' ', type: 'neutral' },
+          { text: 'mon', type: 'prefix' },
+          { text: 'oxide', type: 'ending' },
+        ],
+      },
+      {
+        formula: 'CO2',
+        iupacName: 'carbon dioxide',
+        explanation: '1 carbon (no mono- on first element) and 2 oxygens ("di-" does not drop vowels before oxide). Result: carbon dioxide.',
+        elementsInvolved: ['C', 'O'],
+        parts: [
+          { text: 'carbon', type: 'metal' },
+          { text: ' ', type: 'neutral' },
+          { text: 'di', type: 'prefix' },
+          { text: 'oxide', type: 'ending' },
+        ],
+      },
+      {
+        formula: 'N2O5',
+        iupacName: 'dinitrogen pentoxide',
+        explanation: '2 nitrogens take "dinitrogen". 5 oxygens take "penta-" + "oxide", dropping the "a" to form "pentoxide". Result: dinitrogen pentoxide.',
+        elementsInvolved: ['N', 'O'],
+        parts: [
+          { text: 'di', type: 'prefix' },
+          { text: 'nitrogen', type: 'metal' },
+          { text: ' ', type: 'neutral' },
+          { text: 'pent', type: 'prefix' },
+          { text: 'oxide', type: 'ending' },
+        ],
+      },
+    ],
+    commonMistakes: [
+      {
+        mistake: 'Writing "monocarbon monoxide" for CO.',
+        correction: 'Write "carbon monoxide". Never use "mono-" on the first element.',
+        why: 'Chemists assume a single atom on the initial element unless an explicit prefix says otherwise.',
+      },
+      {
+        mistake: 'Writing "pentaoxide" or "tetraoxide".',
+        correction: 'Drop the "a" before oxide: "pentoxide" and "tetroxide".',
+        why: 'English chemistry pronunciation avoids awkward double vowels (a-o or o-o).',
+      },
+    ],
+    rememberTips: [
+      'Golden Rule: Prefixes belong exclusively to nonmetal + nonmetal pairs. Keep them far away from ionic salts!',
+      'Vowel rule: mono-oxide -> monoxide, penta-oxide -> pentoxide, tetra-oxide -> tetroxide.',
+    ],
+    cheatSheet: {
+      header: 'Greek Numerical Counting Prefixes',
+      items: [
+        { label: '1', value: 'mono- (omit on first element; drop "o" before oxide)' },
+        { label: '2', value: 'di- (keeps "i": dioxide)' },
+        { label: '3', value: 'tri- (keeps "i": trioxide)' },
+        { label: '4', value: 'tetra- (becomes tetroxide)' },
+        { label: '5', value: 'penta- (becomes pentoxide)' },
+        { label: '6', value: 'hexa- (becomes hexoxide)' },
+        { label: '7', value: 'hepta- (becomes heptoxide)' },
+        { label: '8', value: 'octa- (becomes octoxide)' },
+        { label: '9', value: 'nona- (becomes nonoxide)' },
+        { label: '10', value: 'deca- (becomes decoxide)' },
+      ],
+    },
+  },
+  {
+    id: 'hydrogen-halogen-binary-acids',
+    title: 'Hydrogen + Halogen (Binary Acids)',
+    ruleSentence: 'Name aqueous hydrogen halides with the prefix "hydro-", followed by the halogen stem, the suffix "-ic", and the word "acid".',
+    howToNameSteps: [
+      'Verify that the compound consists of hydrogen combined with a halogen (F, Cl, Br, I) or simple binary anion in aqueous solution.',
+      'Start with the essential prefix "hydro-".',
+      'Insert the halogen root stem (fluor-, chlor-, brom-, iod-).',
+      'Attach the suffix "-ic", and conclude with the separate word "acid".',
+    ],
+    howToReadSteps: [
+      'Recognize the "hydro-...-ic acid" template as a binary acid (strictly 2 elements: H + nonmetal).',
+      'Strip "hydro-" and "-ic acid" to discover the halogen element.',
+      'Recall that hydrogen is +1 and halogens are -1, producing a simple 1:1 chemical formula.',
+    ],
+    examples: [
+      {
+        formula: 'HF',
+        iupacName: 'hydrofluoric acid',
+        explanation: 'Hydrogen combined with fluorine. We combine "hydro-" + "fluor" + "-ic acid" to form hydrofluoric acid.',
+        elementsInvolved: ['H', 'F'],
+        parts: [
+          { text: 'hydro', type: 'prefix' },
+          { text: 'fluor', type: 'metal' },
+          { text: 'ic acid', type: 'ending' },
+        ],
+      },
+      {
+        formula: 'HI',
+        iupacName: 'hydroiodic acid',
+        explanation: 'Hydrogen combined with iodine. We combine "hydro-" + "iod" + "-ic acid" to produce hydroiodic acid.',
+        elementsInvolved: ['H', 'I'],
+        parts: [
+          { text: 'hydro', type: 'prefix' },
+          { text: 'iod', type: 'metal' },
+          { text: 'ic acid', type: 'ending' },
+        ],
+      },
+      {
+        formula: 'HCl',
+        iupacName: 'hydrochloric acid',
+        explanation: 'Hydrogen combined with chlorine in aqueous form: "hydro-" + "chlor" + "-ic acid" = hydrochloric acid.',
+        elementsInvolved: ['H', 'Cl'],
+        parts: [
+          { text: 'hydro', type: 'prefix' },
+          { text: 'chlor', type: 'metal' },
+          { text: 'ic acid', type: 'ending' },
+        ],
+      },
+    ],
+    commonMistakes: [
+      {
+        mistake: 'Putting "hydro-" on ternary oxyacids like HNO₃ or H₂SO₄.',
+        correction: '"hydro-" is ONLY for binary acids without oxygen. HNO₃ is nitric acid, never hydronitric acid.',
+        why: 'The presence of "hydro-" tells chemists there is NO oxygen in the acid.',
+      },
+      {
+        mistake: 'Confusing dry hydrogen chloride gas (HCl) with aqueous hydrochloric acid.',
+        correction: 'As a pure gas it is named hydrogen chloride; in water (aq) it becomes hydrochloric acid.',
+        why: 'Acid nomenclature specifically describes compounds donating protons in aqueous environments.',
+      },
+    ],
+    rememberTips: [
+      'Binary Acid Formula: "hydro-" + [root stem] + "-ic acid".',
+      'The Big 4 Binary Halogen Acids: HF (hydrofluoric), HCl (hydrochloric), HBr (hydrobromic), HI (hydroiodic).',
+    ],
+    cheatSheet: {
+      header: 'Binary Acids Reference',
+      items: [
+        { label: 'HF', value: 'hydrofluoric acid (stem: fluor)' },
+        { label: 'HCl', value: 'hydrochloric acid (stem: chlor)' },
+        { label: 'HBr', value: 'hydrobromic acid (stem: brom)' },
+        { label: 'HI', value: 'hydroiodic acid (stem: iod)' },
+        { label: 'H₂S', value: 'hydrosulfuric acid (stem: sulfur)' },
+        { label: 'HCN', value: 'hydrocyanic acid (pseudobinary: cyan)' },
+      ],
+    },
+  },
+  {
+    id: 'metal-one-oxidation-polyatomic',
+    title: 'Metal with One Oxidation Number + Polyatomic Ion',
+    ruleSentence: 'State the plain name of the metal followed directly by the standard name of the polyatomic ion.',
+    howToNameSteps: [
+      'Write the regular English name of the metal cation (Group 1A, Group 2A, Al, Zn, Ag, or NH₄⁺).',
+      'Identify the polyatomic ion and state its established name without modifying its ending.',
+      'Do not change the polyatomic ending to "-ide" (keep -ate or -ite intact).',
+      'Do not use Roman numerals or Greek numerical prefixes.',
+    ],
+    howToReadSteps: [
+      'Read the metal name to write the cation and its known invariant charge.',
+      'Read the polyatomic ion name and write its chemical formula with its negative charge.',
+      'Criss-cross the charges and enclose the polyatomic ion in parentheses if its final subscript is > 1.',
+    ],
+    examples: [
+      {
+        formula: 'NaNO3',
+        iupacName: 'sodium nitrate',
+        explanation: 'Sodium (Na) has fixed charge +1. NO₃⁻ is the nitrate ion. Simply join the two names: sodium nitrate.',
+        elementsInvolved: ['Na', 'N', 'O'],
+        parts: [
+          { text: 'sodium', type: 'metal' },
+          { text: ' ', type: 'neutral' },
+          { text: 'nitrate', type: 'ending' },
+        ],
+      },
+      {
+        formula: 'Ca3(PO4)2',
+        iupacName: 'calcium phosphate',
+        explanation: 'Calcium (Ca) has fixed charge +2. PO₄³⁻ is the phosphate ion. Criss-crossing yields Ca₃(PO₄)₂. The name is straightforward: calcium phosphate.',
+        elementsInvolved: ['Ca', 'P', 'O'],
+        parts: [
+          { text: 'calcium', type: 'metal' },
+          { text: ' ', type: 'neutral' },
+          { text: 'phosphate', type: 'ending' },
+        ],
+      },
+      {
+        formula: 'Al2(SO4)3',
+        iupacName: 'aluminum sulfate',
+        explanation: 'Aluminum has fixed charge +3. SO₄²⁻ is the sulfate ion. Criss-crossing gives Al₂(SO₄)₃. Named directly as aluminum sulfate.',
+        elementsInvolved: ['Al', 'S', 'O'],
+        parts: [
+          { text: 'aluminum', type: 'metal' },
+          { text: ' ', type: 'neutral' },
+          { text: 'sulfate', type: 'ending' },
+        ],
+      },
+    ],
+    commonMistakes: [
+      {
+        mistake: 'Changing the polyatomic ion ending to "-ide" (e.g., calling NaNO₃ "sodium nitride").',
+        correction: 'Keep the polyatomic ion name intact: sodium nitrate. Nitride is the single atom N³⁻.',
+        why: 'Modifying the suffix confuses a multi-atom oxyanion with a simple monatomic element.',
+      },
+      {
+        mistake: 'Omitting parentheses in formulas when the multiplier is greater than 1, like writing Ca₃PO₄₂.',
+        correction: 'Enclose the polyatomic ion in parentheses: Ca₃(PO₄)₂.',
+        why: 'Without parentheses, 4 and 2 run together into 42 oxygen atoms instead of 2 phosphate groups.',
+      },
+    ],
+    rememberTips: [
+      'Ammonium (NH₄⁺) is an honorary metal: it behaves exactly like a Group 1A metal cation.',
+      'Top Oxyanions: Nitrate (NO₃⁻), Sulfate (SO₄²⁻), Phosphate (PO₄³⁻), Carbonate (CO₃²⁻).',
+    ],
+    cheatSheet: {
+      header: 'Common Polyatomic Ions Reference',
+      items: [
+        { label: 'Nitrate / Nitrite', value: 'NO₃⁻ (-ate) / NO₂⁻ (-ite)' },
+        { label: 'Sulfate / Sulfite', value: 'SO₄²⁻ (-ate) / SO₃²⁻ (-ite)' },
+        { label: 'Phosphate / Phosphite', value: 'PO₄³⁻ (-ate) / PO₃³⁻ (-ite)' },
+        { label: 'Carbonate / Bicarbonate', value: 'CO₃²⁻ / HCO₃⁻' },
+        { label: 'Hydroxide / Cyanide', value: 'OH⁻ / CN⁻' },
+        { label: 'Ammonium Cation', value: 'NH₄⁺ (+1 charge)' },
+      ],
+    },
+  },
+  {
+    id: 'metal-variable-oxidation-polyatomic',
+    title: 'Metal with Variable Oxidation Number + Polyatomic Ion',
+    ruleSentence: 'State the metal name with its oxidation number in Roman numerals (Stock) or its Latin stem with "-ous"/ "-ic" (Traditional), followed by the polyatomic ion name.',
+    howToNameSteps: [
+      'Determine the charge on the polyatomic ion first (e.g. NO₃⁻ is -1, SO₄²⁻ is -2).',
+      'Use the overall compound ratio to deduce the exact charge on the variable transition metal.',
+      'IUPAC Stock Method: Write metal name + (Roman numeral of charge) + polyatomic ion name.',
+      'Traditional Method: Write Latin stem + "-ous" (lower charge) or "-ic" (higher charge) + polyatomic ion name.',
+    ],
+    howToReadSteps: [
+      'Read the Roman numeral directly as the cation charge.',
+      'Retrieve the charge of the polyatomic ion from memory or reference.',
+      'Criss-cross charges, simplify if needed, and place parentheses around the polyatomic group if its subscript is > 1.',
+    ],
+    examples: [
+      {
+        formula: 'Pb(NO3)2',
+        iupacName: 'lead (II) nitrate',
+        traditionalName: 'plumbous nitrate',
+        explanation: 'Each nitrate has a -1 charge; two nitrates equal -2. Therefore lead is in the +2 oxidation state. Stock: lead (II) nitrate. Since +2 is the lower oxidation state of lead (+2 vs +4), the Latin name is plumbous nitrate.',
+        elementsInvolved: ['Pb', 'N', 'O'],
+        parts: [
+          { text: 'lead', type: 'metal' },
+          { text: ' (', type: 'neutral' },
+          { text: 'II', type: 'oxidation' },
+          { text: ') ', type: 'neutral' },
+          { text: 'nitrate', type: 'ending' },
+        ],
+      },
+      {
+        formula: 'Pb(NO3)4',
+        iupacName: 'lead (IV) nitrate',
+        traditionalName: 'plumbic nitrate',
+        explanation: 'Four nitrates provide 4 × (-1) = -4 charge, meaning lead must be +4. Stock: lead (IV) nitrate. Since +4 is lead\'s higher oxidation state, the traditional name is plumbic nitrate.',
+        elementsInvolved: ['Pb', 'N', 'O'],
+        parts: [
+          { text: 'lead', type: 'metal' },
+          { text: ' (', type: 'neutral' },
+          { text: 'IV', type: 'oxidation' },
+          { text: ') ', type: 'neutral' },
+          { text: 'nitrate', type: 'ending' },
+        ],
+      },
+      {
+        formula: 'FeSO4',
+        iupacName: 'iron (II) sulfate',
+        traditionalName: 'ferrous sulfate',
+        explanation: 'Sulfate (SO₄²⁻) has a -2 charge. Since iron and sulfate are in a 1:1 ratio, iron must have a +2 charge. Stock: iron (II) sulfate. Traditional: ferrous sulfate.',
+        elementsInvolved: ['Fe', 'S', 'O'],
+        parts: [
+          { text: 'iron', type: 'metal' },
+          { text: ' (', type: 'neutral' },
+          { text: 'II', type: 'oxidation' },
+          { text: ') ', type: 'neutral' },
+          { text: 'sulfate', type: 'ending' },
+        ],
+      },
+    ],
+    commonMistakes: [
+      {
+        mistake: 'Calculating the metal charge from the subscript instead of the anion charge.',
+        correction: 'Always multiply the number of polyatomic ions by their true charge to find total negative charge first.',
+        why: 'In FeSO₄, there is no subscript on sulfate, but sulfate\'s charge is -2, meaning iron is +2, not +1.',
+      },
+      {
+        mistake: 'Putting Roman numerals in parentheses around the polyatomic ion name.',
+        correction: 'The Roman numeral belongs directly after the metal: "lead (II) nitrate", not "lead nitrate (II)".',
+        why: 'The Roman numeral specifies the oxidation state of the metal, not the polyatomic ion.',
+      },
+    ],
+    rememberTips: [
+      'Plumbous = Pb²⁺, Plumbic = Pb⁴⁺; Ferrous = Fe²⁺, Ferric = Fe³⁺; Cuprous = Cu⁺, Cupric = Cu²⁺.',
+      'Check: (Metal atoms × Metal charge) + (Polyatomic groups × Polyatomic charge) = 0.',
+    ],
+    cheatSheet: {
+      header: 'Variable Metals with Polyatomic Pairs',
+      items: [
+        { label: 'Lead (Pb)', value: 'Pb(NO₃)₂: lead (II) / plumbous; Pb(NO₃)₄: lead (IV) / plumbic' },
+        { label: 'Iron (Fe)', value: 'FeSO₄: iron (II) / ferrous; Fe₂(SO₄)₃: iron (III) / ferric' },
+        { label: 'Copper (Cu)', value: 'Cu₂SO₄: copper (I) / cuprous; CuSO₄: copper (II) / cupric' },
+        { label: 'Tin (Sn)', value: 'Sn(SO₄)₂: tin (IV) / stannic; SnSO₄: tin (II) / stannous' },
+        { label: 'Cobalt (Co)', value: 'Co(NO₃)₂: cobalt (II); Co(NO₃)₃: cobalt (III)' },
+        { label: 'Manganese (Mn)', value: 'MnSO₄: manganese (II); Mn(SO₄)₂: manganese (IV)' },
+      ],
+    },
+  },
+  {
+    id: 'hydrogen-polyatomic-ternary-acids',
+    title: 'Hydrogen + Polyatomic Ion (Ternary Acids)',
+    ruleSentence: 'Name oxyacids by converting the polyatomic suffix "-ite" into "-ous" or "-ate" into "-ic", followed by the word "acid" (never using "hydro-"), remembering that H₂O is water.',
+    howToNameSteps: [
+      'Identify the polyatomic oxyanion combined with hydrogen.',
+      'If the polyatomic ion ends in "-ate", transform the suffix to "-ic acid" (e.g. nitrate -> nitric acid).',
+      'If the polyatomic ion ends in "-ite", transform the suffix to "-ous acid" (e.g. nitrite -> nitrous acid).',
+      'Sulfur and phosphorus roots expand slightly for euphony: sulfate -> sulfuric acid (not sulfic), phosphate -> phosphoric acid (not phosphic).',
+      'CRITICAL: Never add the prefix "hydro-" to ternary oxyacids. "hydro-" is reserved strictly for binary acids.',
+      'SPECIAL EXCEPTION: H₂O is water, a neutral molecule, and is NEVER named like an acid.',
+    ],
+    howToReadSteps: [
+      'If an acid name lacks "hydro-", you know it contains oxygen and a polyatomic anion.',
+      'Convert "-ic acid" back into the parent "-ate" anion; convert "-ous acid" back into the parent "-ite" anion.',
+      'Add enough H⁺ ions (+1 each) to completely balance the negative charge of the polyatomic ion.',
+    ],
+    examples: [
+      {
+        formula: 'HNO2',
+        iupacName: 'nitrous acid',
+        explanation: 'Combined with H⁺ is the nitrite ion (NO₂⁻). The suffix "-ite" becomes "-ous acid". Result: nitrous acid.',
+        elementsInvolved: ['H', 'N', 'O'],
+        parts: [
+          { text: 'nitr', type: 'metal' },
+          { text: 'ous', type: 'ending' },
+          { text: ' ', type: 'neutral' },
+          { text: 'acid', type: 'prefix' },
+        ],
+      },
+      {
+        formula: 'HNO3',
+        iupacName: 'nitric acid',
+        explanation: 'Combined with H⁺ is the nitrate ion (NO₃⁻). The suffix "-ate" becomes "-ic acid". Result: nitric acid.',
+        elementsInvolved: ['H', 'N', 'O'],
+        parts: [
+          { text: 'nitr', type: 'metal' },
+          { text: 'ic', type: 'ending' },
+          { text: ' ', type: 'neutral' },
+          { text: 'acid', type: 'prefix' },
+        ],
+      },
+      {
+        formula: 'H2SO4',
+        iupacName: 'sulfuric acid',
+        explanation: 'Combined with two H⁺ is the sulfate ion (SO₄²⁻). The suffix "-ate" converts to "-ic acid", expanding the stem to "sulfur-". Result: sulfuric acid.',
+        elementsInvolved: ['H', 'S', 'O'],
+        parts: [
+          { text: 'sulfur', type: 'metal' },
+          { text: 'ic', type: 'ending' },
+          { text: ' ', type: 'neutral' },
+          { text: 'acid', type: 'prefix' },
+        ],
+      },
+    ],
+    commonMistakes: [
+      {
+        mistake: 'Calling HNO₃ "hydronitric acid".',
+        correction: 'Write "nitric acid". Do not use "hydro-" when oxygen is present.',
+        why: '"hydro-" signals a binary acid with no oxygen (like HCl). Ternary acids drop "hydro-" entirely.',
+      },
+      {
+        mistake: 'Naming H₂O as "dihydrogen monoxide acid" or "hydric acid".',
+        correction: 'H₂O is water, a neutral covalent liquid.',
+        why: 'Water is neutral (pH 7) and is not named under acid nomenclature rules.',
+      },
+    ],
+    rememberTips: [
+      'Catchphrase Mnemonic: "I ATE something ICky, and it gave me the -ITE-OUS!" (-ate -> -ic, -ite -> -ous).',
+      'No Hydro for Oxyacids: If there\'s Oxygen, omit the "Hydro-".',
+    ],
+    cheatSheet: {
+      header: 'Ternary Oxyacid Transformation Key',
+      items: [
+        { label: 'NO₂⁻ (nitrite)', value: 'HNO₂ -> nitrous acid (-ite -> -ous)' },
+        { label: 'NO₃⁻ (nitrate)', value: 'HNO₃ -> nitric acid (-ate -> -ic)' },
+        { label: 'SO₃²⁻ (sulfite)', value: 'H₂SO₃ -> sulfurous acid (-ite -> -ous)' },
+        { label: 'SO₄²⁻ (sulfate)', value: 'H₂SO₄ -> sulfuric acid (-ate -> -ic)' },
+        { label: 'PO₄³⁻ (phosphate)', value: 'H₃PO₄ -> phosphoric acid (-ate -> -ic)' },
+        { label: 'CO₃²⁻ (carbonate)', value: 'H₂CO₃ -> carbonic acid (-ate -> -ic)' },
+        { label: 'C₂O₄²⁻ (oxalate)', value: 'H₂C₂O₄ -> oxalic acid (-ate -> -ic)' },
+        { label: 'H₂O (Exception)', value: 'Water (neutral substance, never named as acid)' },
+      ],
+    },
+  },
+];

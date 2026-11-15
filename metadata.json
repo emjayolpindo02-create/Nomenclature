@@ -1,0 +1,6 @@
+{
+  "name": "Compound Naming Guide",
+  "description": "An interactive, offline-ready chemistry guide to master reading, naming, and writing chemical compounds.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

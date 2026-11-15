@@ -1,0 +1,179 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny everything by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helper Primitives ---
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidLessonId(id) {
+      return id is string && id.size() > 0 && id.size() <= 64 && id.matches('^[a-z0-9\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    // --- Validation Blueprints ---
+    function isValidUserAccount(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'email', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'email', 'photoURL', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.displayName is string && data.displayName.size() <= 120
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 200
+        && (!data.keys().hasAny(['photoURL']) || (data.photoURL is string && data.photoURL.size() <= 500))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLessonProgress(data) {
+      return data.keys().hasAll(['userId', 'libraryId', 'passed', 'bestScore', 'attempts', 'passedDate', 'completedAt'])
+        && data.keys().hasOnly(['userId', 'libraryId', 'passed', 'bestScore', 'attempts', 'passedDate', 'passedAt', 'completedAt'])
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && isValidLessonId(data.libraryId)
+        && data.passed is bool
+        && data.bestScore is number && data.bestScore >= 0 && data.bestScore <= 100
+        && data.attempts is int && data.attempts >= 1 && data.attempts <= 100000
+        && data.passedDate is string && data.passedDate.size() <= 10
+        && (!data.keys().hasAny(['passedAt']) || data.passedAt == null || data.passedAt is timestamp)
+        && data.completedAt is timestamp;
+    }
+
+    function isValidUserPreferences(data) {
+      return data.keys().hasAll([
+          'userId', 'theme', 'accentColor', 'fontFamily', 'fontSize',
+          'density', 'cornerRoundness', 'animations', 'realSubscripts',
+          'periodicColorBy', 'hintsEnabled', 'passingScore', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'theme', 'accentColor', 'fontFamily', 'fontSize',
+          'density', 'cornerRoundness', 'animations', 'realSubscripts',
+          'periodicColorBy', 'hintsEnabled', 'passingScore', 'updatedAt'
+        ])
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && data.theme in ['light', 'dark', 'sepia', 'high-contrast', 'system']
+        && data.accentColor in ['indigo', 'blue', 'emerald', 'amber', 'rose', 'teal', 'violet']
+        && data.fontFamily in ['system', 'serif', 'mono', 'dyslexic']
+        && data.fontSize in ['sm', 'md', 'lg', 'xl']
+        && data.density in ['compact', 'comfortable', 'spacious']
+        && data.cornerRoundness in ['sharp', 'rounded', 'soft']
+        && data.animations is bool
+        && data.realSubscripts is bool
+        && data.periodicColorBy in ['category', 'block', 'variable-metal']
+        && data.hintsEnabled is bool
+        && data.passingScore is number && data.passingScore >= 50 && data.passingScore <= 100
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+
+    // Private user account profile: strictly owner-only get/create/update; listing all users is forbidden
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserAccount(incoming())
+        && incoming().uid == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserAccount(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'photoURL', 'updatedAt']);
+      allow delete: if false;
+
+      // Private per-lesson progress records: only the account owner may read, list, write, or reset
+      match /progress/{lessonId} {
+        allow get: if isValidId(userId) && isValidLessonId(lessonId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidLessonId(lessonId)
+          && isOwner(userId)
+          && isValidLessonProgress(incoming())
+          && incoming().userId == userId
+          && incoming().libraryId == lessonId
+          && incoming().completedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId))
+          && (
+            incoming().passed == false
+              ? (incoming().passedDate == '' && (!incoming().keys().hasAny(['passedAt']) || incoming().passedAt == null))
+              : (incoming().passedDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && incoming().passedAt == request.time)
+          );
+        allow update: if isValidId(userId)
+          && isValidLessonId(lessonId)
+          && isOwner(userId)
+          && isValidLessonProgress(incoming())
+          && incoming().userId == existing().userId
+          && incoming().libraryId == existing().libraryId
+          && incoming().completedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['passed', 'bestScore', 'attempts', 'passedDate', 'passedAt', 'completedAt'])
+          && (
+            existing().passed == true
+              ? (incoming().passed == true && incoming().passedDate == existing().passedDate && incoming().passedAt == existing().passedAt)
+              : (
+                  incoming().passed == false
+                    ? (incoming().passedDate == '' && (!incoming().keys().hasAny(['passedAt']) || incoming().passedAt == null))
+                    : (incoming().passedDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && incoming().passedAt == request.time)
+                )
+          );
+        allow delete: if isValidId(userId) && isValidLessonId(lessonId) && isOwner(userId);
+      }
+
+      // Private user UI preferences
+      match /preferences/{prefId} {
+        allow get: if isValidId(userId) && isValidId(prefId) && prefId == 'settings' && isOwner(userId);
+        allow list: if false;
+        allow create: if isValidId(userId)
+          && isValidId(prefId)
+          && prefId == 'settings'
+          && isOwner(userId)
+          && isValidUserPreferences(incoming())
+          && incoming().userId == userId
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow update: if isValidId(userId)
+          && isValidId(prefId)
+          && prefId == 'settings'
+          && isOwner(userId)
+          && isValidUserPreferences(incoming())
+          && incoming().userId == existing().userId
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'theme', 'accentColor', 'fontFamily', 'fontSize',
+            'density', 'cornerRoundness', 'animations', 'realSubscripts',
+            'periodicColorBy', 'hintsEnabled', 'passingScore', 'updatedAt'
+          ]);
+        allow delete: if isValidId(userId) && isValidId(prefId) && prefId == 'settings' && isOwner(userId);
+      }
+    }
+  }
+}
