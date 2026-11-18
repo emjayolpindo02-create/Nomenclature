@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import express from 'express';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -8,6 +8,10 @@ import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const localEnvPath = path.resolve(__dirname, '.env');
+if (fs.existsSync(localEnvPath)) {
+  dotenv.config({ path: localEnvPath, override: true });
+}
 
 const PORT = Number(process.env.PORT || 3000);
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -359,7 +363,11 @@ async function startServer() {
     });
 
     if (disableHmr) {
-      app.get('/@vite/client', async (_req, res, next) => {
+      app.use(async (req, res, next) => {
+        if (req.method !== 'GET' || !req.path.endsWith('/@vite/client')) {
+          next();
+          return;
+        }
         try {
           const result = await vite.transformRequest('/@vite/client');
           if (!result?.code) {
@@ -367,8 +375,8 @@ async function startServer() {
             return;
           }
           const patched = result.code
-            .replace('await wsTransport.connect(handlers);', 'return;')
-            .replace('ws.send(JSON.stringify(data));', 'ws?.send(JSON.stringify(data));');
+            .replaceAll('await wsTransport.connect(handlers);', 'return;')
+            .replaceAll('ws.send(JSON.stringify(data));', 'ws?.send(JSON.stringify(data));');
           res.type('application/javascript').send(patched);
         } catch {
           next();

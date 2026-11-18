@@ -1,8 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { UserSettings } from '../types/chemistry';
 import { useAuth } from './AuthContext';
-import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
 
 const DEFAULT_SETTINGS: UserSettings = {
   theme: 'system',
@@ -20,13 +18,13 @@ const DEFAULT_SETTINGS: UserSettings = {
 
 const LEGACY_STORAGE_KEY = 'compound_naming_guide_settings_v1';
 
-function getStorageKey(uid: string | undefined): string {
-  return uid ? `ilab_settings_v2_${uid}` : 'ilab_settings_v2_guest';
+function getStorageKey(username: string | undefined): string {
+  return username ? `ilab_settings_v2_${username.toLowerCase()}` : 'ilab_settings_v2_guest';
 }
 
-function loadSettingsForUid(uid: string | undefined): UserSettings {
+function loadSettingsForUser(username: string | undefined): UserSettings {
   try {
-    const stored = localStorage.getItem(getStorageKey(uid));
+    const stored = localStorage.getItem(getStorageKey(username));
     if (stored) {
       return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
     }
@@ -45,10 +43,9 @@ interface SettingsContextType {
 const SettingsContext = createContext<SettingsContextType | null>(null);
 
 export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
-  const [settings, setSettings] = useState<UserSettings>(() => loadSettingsForUid(undefined));
+  const { user, sectionPolicy } = useAuth();
+  const [settings, setSettings] = useState<UserSettings>(() => loadSettingsForUser(undefined));
 
-  // Remove old unscoped key on startup to prevent cross-account leakage
   useEffect(() => {
     try {
       localStorage.removeItem(LEGACY_STORAGE_KEY);
@@ -57,89 +54,20 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, []);
 
-  // Load user-specific settings when account changes and subscribe to private Firestore prefs
+  // Load user-scoped settings when signed-in username changes
   useEffect(() => {
-    setSettings(loadSettingsForUid(user?.uid));
-
-    if (!user) return;
-
-    const prefPath = `users/${user.uid}/preferences/settings`;
-    const prefRef = doc(db, 'users', user.uid, 'preferences', 'settings');
-
-    const unsubscribe = onSnapshot(
-      prefRef,
-      (snap) => {
-        if (snap.exists()) {
-          const data = snap.data() as Partial<UserSettings>;
-          const merged: UserSettings = {
-            theme: data.theme || DEFAULT_SETTINGS.theme,
-            accentColor: data.accentColor || DEFAULT_SETTINGS.accentColor,
-            fontFamily: data.fontFamily || DEFAULT_SETTINGS.fontFamily,
-            fontSize: data.fontSize || DEFAULT_SETTINGS.fontSize,
-            density: data.density || DEFAULT_SETTINGS.density,
-            cornerRoundness: data.cornerRoundness || DEFAULT_SETTINGS.cornerRoundness,
-            animations: typeof data.animations === 'boolean' ? data.animations : DEFAULT_SETTINGS.animations,
-            realSubscripts:
-              typeof data.realSubscripts === 'boolean' ? data.realSubscripts : DEFAULT_SETTINGS.realSubscripts,
-            periodicColorBy: data.periodicColorBy || DEFAULT_SETTINGS.periodicColorBy,
-            hintsEnabled:
-              typeof data.hintsEnabled === 'boolean' ? data.hintsEnabled : DEFAULT_SETTINGS.hintsEnabled,
-            passingScore:
-              typeof data.passingScore === 'number'
-                ? Math.min(100, Math.max(50, data.passingScore))
-                : DEFAULT_SETTINGS.passingScore,
-          };
-          setSettings(merged);
-          try {
-            localStorage.setItem(getStorageKey(user.uid), JSON.stringify(merged));
-          } catch {
-            // ignore
-          }
-        }
-      },
-      (error) => {
-        if (error.message.includes('Missing or insufficient permissions')) {
-          handleFirestoreError(error, OperationType.GET, prefPath);
-        } else {
-          console.warn('Could not sync settings from Firestore:', error);
-        }
-      }
-    );
-
-    return () => unsubscribe();
-  }, [user]);
+    const loaded = loadSettingsForUser(user?.username);
+    setSettings({
+      ...loaded,
+      passingScore: sectionPolicy.passingScore || loaded.passingScore,
+    });
+  }, [user?.username, sectionPolicy.passingScore]);
 
   const persistSettings = (updated: UserSettings) => {
     try {
-      localStorage.setItem(getStorageKey(user?.uid), JSON.stringify(updated));
+      localStorage.setItem(getStorageKey(user?.username), JSON.stringify(updated));
     } catch (e) {
       console.warn('Could not save settings to localStorage:', e);
-    }
-
-    if (user) {
-      const prefPath = `users/${user.uid}/preferences/settings`;
-      const prefRef = doc(db, 'users', user.uid, 'preferences', 'settings');
-      setDoc(prefRef, {
-        userId: user.uid,
-        theme: updated.theme,
-        accentColor: updated.accentColor,
-        fontFamily: updated.fontFamily,
-        fontSize: updated.fontSize,
-        density: updated.density,
-        cornerRoundness: updated.cornerRoundness,
-        animations: updated.animations,
-        realSubscripts: updated.realSubscripts,
-        periodicColorBy: updated.periodicColorBy,
-        hintsEnabled: updated.hintsEnabled,
-        passingScore: Math.min(100, Math.max(50, updated.passingScore)),
-        updatedAt: serverTimestamp(),
-      }).catch((error) => {
-        if (error instanceof Error && error.message.includes('Missing or insufficient permissions')) {
-          handleFirestoreError(error, OperationType.WRITE, prefPath);
-        } else {
-          console.warn('Could not save settings to Firestore:', error);
-        }
-      });
     }
   };
 
@@ -152,15 +80,18 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const resetSettings = () => {
-    setSettings(DEFAULT_SETTINGS);
-    persistSettings(DEFAULT_SETTINGS);
+    const resetVal: UserSettings = {
+      ...DEFAULT_SETTINGS,
+      passingScore: sectionPolicy.passingScore || DEFAULT_SETTINGS.passingScore,
+    };
+    setSettings(resetVal);
+    persistSettings(resetVal);
   };
 
   // Apply CSS variables and classes to document root for instant live preview
   useEffect(() => {
     const root = document.documentElement;
 
-    // Theme resolution
     let effectiveTheme = settings.theme;
     if (effectiveTheme === 'system') {
       const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -207,7 +138,6 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       root.style.setProperty('--text-muted', '#94a3b8');
     }
 
-    // Accent colors
     const accentColors: Record<string, { primary: string; hover: string; light: string; border: string }> = {
       indigo: { primary: '#6366f1', hover: '#4f46e5', light: 'rgba(99, 102, 241, 0.15)', border: '#818cf8' },
       blue: { primary: '#2563eb', hover: '#1d4ed8', light: 'rgba(37, 99, 235, 0.15)', border: '#60a5fa' },
@@ -223,7 +153,6 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     root.style.setProperty('--accent-light', currentAccent.light);
     root.style.setProperty('--accent-border', currentAccent.border);
 
-    // Font Family
     if (settings.fontFamily === 'serif') {
       root.style.setProperty('--app-font', 'Georgia, Cambria, "Times New Roman", Times, serif');
     } else if (settings.fontFamily === 'mono') {
@@ -234,19 +163,15 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       root.style.setProperty('--app-font', 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif');
     }
 
-    // Font Size Base
     const sizeMap = { sm: '14px', md: '16px', lg: '18px', xl: '20px' };
     root.style.setProperty('--base-font-size', sizeMap[settings.fontSize]);
 
-    // Density
     const densityPad = { compact: '6px', comfortable: '12px', spacious: '18px' };
     root.style.setProperty('--density-padding', densityPad[settings.density]);
 
-    // Roundness
     const radiusMap = { sharp: '0px', rounded: '8px', soft: '16px' };
     root.style.setProperty('--app-radius', radiusMap[settings.cornerRoundness]);
 
-    // Animations / Motion
     if (!settings.animations) {
       root.style.setProperty('--transition-speed', '0s');
       root.classList.add('no-animations');

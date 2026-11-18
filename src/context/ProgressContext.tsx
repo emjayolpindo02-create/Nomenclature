@@ -1,31 +1,33 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { PracticeProgress } from '../types/chemistry';
 import { PRACTICE_SETS } from '../data/practiceQuestions';
 import { useSettings } from './SettingsContext';
 import { useAuth } from './AuthContext';
-import {
-  collection,
-  doc,
-  getDocs,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  setDoc,
-  Timestamp,
-  where,
-  writeBatch,
-} from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { SHEETS_CONFIG } from '../config/sheets';
 import {
   getLessonUnlockStatus,
-  getLocalDateKey,
   LessonUnlockStatus,
 } from '../engine/lessonLock';
+import {
+  AttemptSubmissionPayload,
+  createAttemptId,
+  enqueueOfflineAttempt,
+  flushOfflineQueue,
+  mergeProgressMaps,
+  QueuedAttempt,
+  StudentSession,
+} from '../engine/sheetsSync';
+import { saveStudentAttempt } from '../services/sheetsClient';
 
 const LEGACY_PROGRESS_KEY = 'compound_naming_guide_progress_v1';
+const QUEUE_STORAGE_KEY = 'ilab_attempt_queue_v1';
 
-function getProgressStorageKey(uid: string): string {
-  return `ilab_progress_v2_${uid}`;
+function getProgressStorageKey(username: string): string {
+  return `ilab_progress_v3_${username.toLowerCase()}`;
+}
+
+function getOverridesStorageKey(username: string): string {
+  return `ilab_overrides_v3_${username.toLowerCase()}`;
 }
 
 export interface Badge {
@@ -36,40 +38,79 @@ export interface Badge {
   unlocked: boolean;
 }
 
+export interface SubmitPracticeInput {
+  libraryId: string;
+  scorePercent: number;
+  correctCount: number;
+  totalQuestions: number;
+  questionIds: string[];
+  missedQuestionIds: string[];
+  overrideSession?: StudentSession;
+}
+
+export interface SubmitPracticeResult {
+  status: 'synced' | 'queued' | 'unsubmitted';
+  passed: boolean;
+  officialPassDate?: string;
+  newBadges: Badge[];
+  message?: string;
+}
+
 interface ProgressContextType {
   progressMap: Record<string, PracticeProgress>;
+  unlockOverrides: string[];
+  queuedAttempts: QueuedAttempt[];
+  isSyncingQueue: boolean;
   progressLoading: boolean;
-  recordPracticeResult: (
-    libraryId: string,
-    scorePercent: number
-  ) => Promise<{ passed: boolean; newBadges: Badge[]; savedToAccount: boolean }>;
+  submitPracticeAttempt: (input: SubmitPracticeInput) => Promise<SubmitPracticeResult>;
+  syncOfflineQueueNow: () => Promise<void>;
   isLibraryUnlocked: (libraryId: string) => boolean;
   getUnlockStatus: (libraryId: string) => LessonUnlockStatus;
   getPreviousLibraryTitle: (libraryId: string) => string | null;
-  resetProgress: () => Promise<void>;
+  resetLocalProgressCache: () => void;
   badges: Badge[];
 }
 
 const ProgressContext = createContext<ProgressContextType | null>(null);
 
-function timestampToIso(val: unknown): string | undefined {
-  if (!val) return undefined;
-  if (val instanceof Timestamp) return val.toDate().toISOString();
-  if (typeof val === 'string') return val;
-  if (typeof val === 'object' && val !== null && 'toDate' in val && typeof (val as { toDate: () => Date }).toDate === 'function') {
-    return (val as { toDate: () => Date }).toDate().toISOString();
+function loadQueue(): QueuedAttempt[] {
+  try {
+    const raw = localStorage.getItem(QUEUE_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
-  return undefined;
 }
 
 export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { settings } = useSettings();
-  const { user, ensureUserProfile } = useAuth();
+  const {
+    session,
+    user,
+    sectionPolicy,
+    clockHighWaterMs,
+    remoteSync,
+    applyRemoteSyncData,
+    handleExpiredSession,
+  } = useAuth();
 
   const [progressMap, setProgressMap] = useState<Record<string, PracticeProgress>>({});
+  const [unlockOverrides, setUnlockOverrides] = useState<string[]>([]);
+  const [queuedAttempts, setQueuedAttempts] = useState<QueuedAttempt[]>(() => loadQueue());
+  const [isSyncingQueue, setIsSyncingQueue] = useState<boolean>(false);
   const [progressLoading, setProgressLoading] = useState<boolean>(false);
-  const [rawPassedAtMap, setRawPassedAtMap] = useState<Record<string, Timestamp | null>>({});
   const [now, setNow] = useState<Date>(() => new Date());
+
+  const saveQueue = useCallback((nextQueue: QueuedAttempt[]) => {
+    setQueuedAttempts(nextQueue);
+    try {
+      localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(nextQueue));
+    } catch {
+      // ignore
+    }
+  }, []);
 
   // Refresh clock every 30s so next-day unlocks activate automatically when midnight passes
   useEffect(() => {
@@ -79,7 +120,7 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return () => clearInterval(interval);
   }, []);
 
-  // Remove legacy unscoped localStorage key so no progress ever leaks across users
+  // Clean up legacy unscoped progress key
   useEffect(() => {
     try {
       localStorage.removeItem(LEGACY_PROGRESS_KEY);
@@ -88,96 +129,63 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, []);
 
-  // Subscribe strictly to the signed-in user's own progress subcollection
+  // Hydrate user-scoped local progress & overrides when active user changes
   useEffect(() => {
-    if (!user) {
+    if (!user?.username) {
       setProgressMap({});
-      setRawPassedAtMap({});
+      setUnlockOverrides([]);
       setProgressLoading(false);
       return;
     }
 
-    setProgressLoading(true);
-
-    // Hydrate user-scoped offline cache while Firestore connects
     try {
-      const cached = localStorage.getItem(getProgressStorageKey(user.uid));
-      if (cached) {
-        setProgressMap(JSON.parse(cached));
-      } else {
-        setProgressMap({});
-      }
+      const cached = localStorage.getItem(getProgressStorageKey(user.username));
+      setProgressMap(cached ? JSON.parse(cached) : {});
     } catch {
       setProgressMap({});
     }
 
-    const progressPath = `users/${user.uid}/progress`;
-    const q = query(
-      collection(db, 'users', user.uid, 'progress'),
-      where('userId', '==', user.uid)
-    );
+    try {
+      const cachedOverrides = localStorage.getItem(getOverridesStorageKey(user.username));
+      setUnlockOverrides(cachedOverrides ? JSON.parse(cachedOverrides) : []);
+    } catch {
+      setUnlockOverrides([]);
+    }
+  }, [user?.username]);
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const nextMap: Record<string, PracticeProgress> = {};
-        const nextTimestamps: Record<string, Timestamp | null> = {};
+  // Apply authoritative progress & overrides whenever remoteSync updates from Google Sheets
+  useEffect(() => {
+    if (!remoteSync || !user?.username) return;
+    if (remoteSync.username.toLowerCase() !== user.username.toLowerCase()) return;
 
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          const libId = typeof data.libraryId === 'string' ? data.libraryId : docSnap.id;
-          nextMap[libId] = {
-            libraryId: libId,
-            passed: Boolean(data.passed),
-            bestScore: typeof data.bestScore === 'number' ? data.bestScore : 0,
-            attempts: typeof data.attempts === 'number' ? data.attempts : 1,
-            passedDate: typeof data.passedDate === 'string' ? data.passedDate : '',
-            passedAt: timestampToIso(data.passedAt) || null,
-            completedAt: timestampToIso(data.completedAt),
-          };
-          nextTimestamps[libId] = data.passedAt instanceof Timestamp ? data.passedAt : null;
-        });
-
-        setProgressMap(nextMap);
-        setRawPassedAtMap(nextTimestamps);
-        setProgressLoading(false);
-
+    if (remoteSync.progressMap) {
+      setProgressMap((prev) => {
+        const merged = mergeProgressMaps(prev, remoteSync.progressMap || {});
         try {
-          localStorage.setItem(getProgressStorageKey(user.uid), JSON.stringify(nextMap));
+          localStorage.setItem(getProgressStorageKey(user.username), JSON.stringify(merged));
         } catch {
           // ignore
         }
-      },
-      (error) => {
-        setProgressLoading(false);
-        if (error.message.includes('Missing or insufficient permissions')) {
-          handleFirestoreError(error, OperationType.LIST, progressPath);
-        } else {
-          console.warn('Could not sync progress from Firestore:', error);
-        }
+        return merged;
+      });
+    }
+
+    if (remoteSync.unlockOverrides) {
+      setUnlockOverrides(remoteSync.unlockOverrides);
+      try {
+        localStorage.setItem(
+          getOverridesStorageKey(user.username),
+          JSON.stringify(remoteSync.unlockOverrides)
+        );
+      } catch {
+        // ignore
       }
-    );
+    }
+  }, [remoteSync, user?.username]);
 
-    return () => unsubscribe();
-  }, [user]);
-
-  const getPreviousLibraryTitle = (libraryId: string): string | null => {
-    const idx = PRACTICE_SETS.findIndex((p) => p.id === libraryId);
-    if (idx <= 0) return null;
-    return PRACTICE_SETS[idx - 1].title;
-  };
-
-  const getUnlockStatus = (libraryId: string): LessonUnlockStatus => {
-    return getLessonUnlockStatus(libraryId, progressMap, settings.passingScore, now);
-  };
-
-  const isLibraryUnlocked = (libraryId: string): boolean => {
-    return getUnlockStatus(libraryId).unlocked;
-  };
-
-  const calculateBadges = (map: Record<string, PracticeProgress>): Badge[] => {
-    const isPassed = (id: string) => !!map[id]?.passed;
-    const hasPerfect = Object.values(map).some((p) => p.bestScore >= 100);
+  const calculateBadges = useCallback((map: Record<string, PracticeProgress>): Badge[] => {
+    const isPassed = (id: string) => Boolean(map[id]?.submitted && map[id]?.passed);
+    const hasPerfect = Object.values(map).some((p) => p.submitted && p.bestScore >= 100);
 
     return [
       {
@@ -231,128 +239,230 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       {
         id: 'badge-perfect',
         name: 'Flawless Precision',
-        description: 'Scored 100% on any practice set',
+        description: 'Scored 100% on any submitted practice set',
         icon: '⭐',
         unlocked: hasPerfect,
       },
     ];
-  };
+  }, []);
 
-  const recordPracticeResult = async (libraryId: string, scorePercent: number) => {
-    const roundedScore = Math.min(100, Math.max(0, Math.round(scorePercent)));
-    const passed = roundedScore >= settings.passingScore;
+  const syncOfflineQueueNow = useCallback(async () => {
+    if (!session || isSyncingQueue) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
 
-    // If user is not signed in, do not persist or leak progress to shared storage
-    if (!user) {
-      return { passed, newBadges: [], savedToAccount: false };
-    }
+    const studentPending = queuedAttempts.filter(
+      (q) => q.username.toLowerCase() === session.user.username.toLowerCase()
+    );
+    if (studentPending.length === 0) return;
 
-    const prevEntry = progressMap[libraryId];
-    const alreadyPassed = !!prevEntry?.passed;
-    const todayKey = getLocalDateKey(new Date());
-
-    const finalPassed = alreadyPassed || passed;
-    const finalPassedDate = alreadyPassed
-      ? prevEntry.passedDate || todayKey
-      : passed
-      ? todayKey
-      : '';
-
-    const updatedEntry: PracticeProgress = {
-      libraryId,
-      passed: finalPassed,
-      bestScore: Math.max(prevEntry?.bestScore || 0, roundedScore),
-      attempts: (prevEntry?.attempts || 0) + 1,
-      passedDate: finalPassedDate,
-      passedAt: alreadyPassed
-        ? prevEntry.passedAt || new Date().toISOString()
-        : passed
-        ? new Date().toISOString()
-        : null,
-      completedAt: new Date().toISOString(),
-    };
-
-    const newMap = { ...progressMap, [libraryId]: updatedEntry };
-    setProgressMap(newMap);
-
+    setIsSyncingQueue(true);
     try {
-      localStorage.setItem(getProgressStorageKey(user.uid), JSON.stringify(newMap));
-    } catch {
-      // ignore
-    }
+      const result = await flushOfflineQueue(
+        queuedAttempts,
+        session.user.username,
+        async (payload) => {
+          return saveStudentAttempt(session.sessionToken, payload);
+        }
+      );
 
-    // Ensure parent /users/{uid} exists before writing to subcollection
-    await ensureUserProfile(user);
+      saveQueue(result.remainingQueue);
 
-    const docPath = `users/${user.uid}/progress/${libraryId}`;
-    const docRef = doc(db, 'users', user.uid, 'progress', libraryId);
-
-    // Match firestore.rules immutability requirements for passedDate & passedAt
-    const existingPassedTimestamp = rawPassedAtMap[libraryId];
-    const firestorePayload = {
-      userId: user.uid,
-      libraryId,
-      passed: finalPassed,
-      bestScore: updatedEntry.bestScore,
-      attempts: updatedEntry.attempts,
-      passedDate: finalPassedDate,
-      passedAt: alreadyPassed
-        ? existingPassedTimestamp || serverTimestamp()
-        : passed
-        ? serverTimestamp()
-        : null,
-      completedAt: serverTimestamp(),
-    };
-
-    try {
-      await setDoc(docRef, firestorePayload);
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('Missing or insufficient permissions')) {
-        handleFirestoreError(error, OperationType.WRITE, docPath);
-      } else {
-        console.warn('Could not save progress to Firestore:', error);
+      if (result.sessionExpired) {
+        handleExpiredSession(result.lastError || undefined);
+        return;
       }
+
+      if (result.latestProgressMap || result.latestSettings || result.latestUnlockOverrides) {
+        applyRemoteSyncData({
+          username: session.user.username,
+          progressMap: result.latestProgressMap || undefined,
+          unlockOverrides: result.latestUnlockOverrides || undefined,
+          settings: result.latestSettings || undefined,
+          serverNowIso: result.latestServerNowMs
+            ? new Date(result.latestServerNowMs).toISOString()
+            : undefined,
+        });
+      }
+    } finally {
+      setIsSyncingQueue(false);
     }
+  }, [
+    session,
+    isSyncingQueue,
+    queuedAttempts,
+    saveQueue,
+    handleExpiredSession,
+    applyRemoteSyncData,
+  ]);
+
+  // Auto-flush offline queue when signed in or when connection restores
+  useEffect(() => {
+    if (!session) return;
+    void syncOfflineQueueNow();
+
+    const onOnline = () => {
+      void syncOfflineQueueNow();
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [session?.sessionToken, syncOfflineQueueNow]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const submitPracticeAttempt = async (
+    input: SubmitPracticeInput
+  ): Promise<SubmitPracticeResult> => {
+    const activeSession = input.overrideSession || session;
+    const effectivePassingScore =
+      sectionPolicy.passingScore || settings.passingScore || 70;
+    const roundedScore = Math.min(100, Math.max(0, Math.round(input.scorePercent)));
+    const passed = roundedScore >= effectivePassingScore;
+
+    // Guest users cannot persist or unlock topics with unsubmitted scores
+    if (!activeSession) {
+      return {
+        status: 'unsubmitted',
+        passed,
+        newBadges: [],
+        message: 'Sign in with your username and PIN to submit this score.',
+      };
+    }
+
+    const username = activeSession.user.username;
+    const attemptId = createAttemptId(username, input.libraryId);
+    const payload: AttemptSubmissionPayload = {
+      attemptId,
+      libraryId: input.libraryId,
+      scorePercent: roundedScore,
+      correctCount: input.correctCount,
+      totalQuestions: input.totalQuestions,
+      questionIds: input.questionIds,
+      missedQuestionIds: input.missedQuestionIds,
+      clientSubmittedAt: new Date().toISOString(),
+    };
 
     const prevBadges = calculateBadges(progressMap);
-    const currBadges = calculateBadges(newMap);
-    const newBadges = currBadges.filter(
-      (b) => b.unlocked && !prevBadges.find((pb) => pb.id === b.id)?.unlocked
-    );
 
-    return { passed, newBadges, savedToAccount: true };
+    try {
+      const res = await saveStudentAttempt(activeSession.sessionToken, payload);
+      if (!res.ok) {
+        if (res.sessionExpired) {
+          handleExpiredSession(res.error);
+          return {
+            status: 'unsubmitted',
+            passed,
+            newBadges: [],
+            message: res.error || 'Session expired. Sign in again to submit this attempt.',
+          };
+        }
+        throw new Error(res.error || 'Could not submit score.');
+      }
+
+      const nextMap = mergeProgressMaps(progressMap, res.progressMap || {});
+      setProgressMap(nextMap);
+      try {
+        localStorage.setItem(getProgressStorageKey(username), JSON.stringify(nextMap));
+      } catch {
+        // ignore
+      }
+
+      applyRemoteSyncData({
+        username,
+        progressMap: nextMap,
+        unlockOverrides: res.unlockOverrides,
+        settings: res.settings,
+        serverNowIso: res.serverNowIso,
+      });
+
+      const currBadges = calculateBadges(nextMap);
+      const newBadges = currBadges.filter(
+        (b) => b.unlocked && !prevBadges.find((pb) => pb.id === b.id)?.unlocked
+      );
+
+      return {
+        status: 'synced',
+        passed,
+        officialPassDate:
+          res.officialPassDate || nextMap[input.libraryId]?.officialPassDate,
+        newBadges,
+      };
+    } catch {
+      // Offline or unreachable Apps Script: queue cleanly with deduplication
+      const queuedItem: QueuedAttempt = {
+        attemptId,
+        username,
+        payload: { ...payload, wasQueuedOffline: true },
+        queuedAt: new Date().toISOString(),
+        retryCount: 0,
+      };
+      const nextQueue = enqueueOfflineAttempt(queuedAttempts, queuedItem);
+      saveQueue(nextQueue);
+
+      // Update local best score & attempt count, WITHOUT setting officialPassDate (stays awaiting-sync until server records official date)
+      const prevEntry = progressMap[input.libraryId];
+      const nextEntry: PracticeProgress = {
+        libraryId: input.libraryId,
+        submitted: true,
+        passed: Boolean(prevEntry?.passed || passed),
+        bestScore: Math.max(prevEntry?.bestScore || 0, roundedScore),
+        attempts: (prevEntry?.attempts || 0) + 1,
+        passedDate: prevEntry?.passedDate || '',
+        officialPassDate: prevEntry?.officialPassDate || '',
+        passedAt: prevEntry?.passedAt || null,
+        completedAt: new Date().toISOString(),
+      };
+      const nextMap = { ...progressMap, [input.libraryId]: nextEntry };
+      setProgressMap(nextMap);
+      try {
+        localStorage.setItem(getProgressStorageKey(username), JSON.stringify(nextMap));
+      } catch {
+        // ignore
+      }
+
+      const currBadges = calculateBadges(nextMap);
+      const newBadges = currBadges.filter(
+        (b) => b.unlocked && !prevBadges.find((pb) => pb.id === b.id)?.unlocked
+      );
+
+      return {
+        status: 'queued',
+        passed,
+        newBadges,
+        message:
+          'Saved to offline queue. Your official pass date will sync automatically once connected.',
+      };
+    }
   };
 
-  const resetProgress = async () => {
+  const resetLocalProgressCache = () => {
     setProgressMap({});
-    setRawPassedAtMap({});
-    if (!user) return;
-
-    try {
-      localStorage.removeItem(getProgressStorageKey(user.uid));
-    } catch {
-      // ignore
-    }
-
-    const progressPath = `users/${user.uid}/progress`;
-    try {
-      const q = query(
-        collection(db, 'users', user.uid, 'progress'),
-        where('userId', '==', user.uid)
-      );
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const batch = writeBatch(db);
-        snap.forEach((d) => batch.delete(d.ref));
-        await batch.commit();
-      }
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('Missing or insufficient permissions')) {
-        handleFirestoreError(error, OperationType.DELETE, progressPath);
-      } else {
-        console.warn('Could not reset progress in Firestore:', error);
+    if (user?.username) {
+      try {
+        localStorage.removeItem(getProgressStorageKey(user.username));
+        localStorage.removeItem(getOverridesStorageKey(user.username));
+      } catch {
+        // ignore
       }
     }
+  };
+
+  const getPreviousLibraryTitle = (libraryId: string): string | null => {
+    const idx = PRACTICE_SETS.findIndex((p) => p.id === libraryId);
+    if (idx <= 0) return null;
+    return PRACTICE_SETS[idx - 1].title;
+  };
+
+  const effectiveRequiredScore = sectionPolicy.passingScore || settings.passingScore || 70;
+
+  const getUnlockStatus = (libraryId: string): LessonUnlockStatus => {
+    return getLessonUnlockStatus(libraryId, progressMap, effectiveRequiredScore, now, {
+      waitingTimeHours: sectionPolicy.waitingTimeHours,
+      unlockOverrides,
+      highWaterNowMs: clockHighWaterMs,
+      clockDriftToleranceMs: SHEETS_CONFIG.clockDriftToleranceMs,
+    });
+  };
+
+  const isLibraryUnlocked = (libraryId: string): boolean => {
+    return getUnlockStatus(libraryId).unlocked;
   };
 
   const badges = calculateBadges(progressMap);
@@ -361,12 +471,20 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     <ProgressContext.Provider
       value={{
         progressMap,
+        unlockOverrides,
+        queuedAttempts: user
+          ? queuedAttempts.filter(
+              (q) => q.username.toLowerCase() === user.username.toLowerCase()
+            )
+          : [],
+        isSyncingQueue,
         progressLoading,
-        recordPracticeResult,
+        submitPracticeAttempt,
+        syncOfflineQueueNow,
         isLibraryUnlocked,
         getUnlockStatus,
         getPreviousLibraryTitle,
-        resetProgress,
+        resetLocalProgressCache,
         badges,
       }}
     >

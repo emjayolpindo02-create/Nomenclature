@@ -123,11 +123,22 @@ export interface Question {
 export interface PracticeProgress {
   libraryId: string;
   passed: boolean;
+  submitted: boolean;
   bestScore: number; // percentage 0 - 100
   attempts: number;
-  passedDate?: string; // local YYYY-MM-DD when passing score was first acquired
+  passedDate?: string; // official YYYY-MM-DD when passing score was first acquired
+  officialPassDate?: string; // explicit server pass date YYYY-MM-DD
   passedAt?: string | null;
   completedAt?: string;
+}
+
+export interface SectionPolicySettings {
+  passingScore: number;
+  waitingTimeHours: number;
+  inactivityDays: number;
+  cooldownMinutes: number;
+  sessionExpiryDays: number;
+  syncedAt?: string;
 }
 
 export interface UserSettings {

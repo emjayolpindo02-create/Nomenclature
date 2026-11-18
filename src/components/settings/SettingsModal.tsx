@@ -1,7 +1,20 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSettings } from '../../context/SettingsContext';
-import { X, Moon, Sun, Sliders, Type, Palette, Sparkles, RotateCcw } from 'lucide-react';
+import {
+  X,
+  Sliders,
+  RotateCcw,
+  ShieldCheck,
+  AlertCircle,
+  AlertTriangle,
+  RefreshCw,
+} from 'lucide-react';
 import { UserSettings } from '../../types/chemistry';
+import {
+  checkSheetsConnection,
+  ConnectionCheckResult,
+  formatSecretCharsLabel,
+} from '../../services/sheetsClient';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -10,6 +23,8 @@ interface SettingsModalProps {
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const { settings, updateSettings, resetSettings } = useSettings();
+  const [checkingConnection, setCheckingConnection] = useState(false);
+  const [connectionResult, setConnectionResult] = useState<ConnectionCheckResult | null>(null);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -23,6 +38,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
 
   if (!isOpen) return null;
 
+  const handleRunConnectionCheck = async () => {
+    setCheckingConnection(true);
+    try {
+      const res = await checkSheetsConnection();
+      setConnectionResult(res);
+    } finally {
+      setCheckingConnection(false);
+    }
+  };
+
   const accentOptions: { id: UserSettings['accentColor']; name: string; color: string }[] = [
     { id: 'indigo', name: 'Indigo', color: '#6366f1' },
     { id: 'blue', name: 'Blue', color: '#2563eb' },
@@ -35,7 +60,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -305,6 +330,81 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             <span>70% (Standard)</span>
             <span>90% (Strict)</span>
           </div>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            Syncs with your class Settings sheet on sign-in and reconnect.
+          </p>
+        </div>
+
+        {/* 8. Google Sheets Connection Diagnostic */}
+        <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider block">
+                Google Sheet Backend
+              </span>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
+                Verify that your app secret matches Code.gs without revealing it.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleRunConnectionCheck()}
+              disabled={checkingConnection}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs font-bold shadow-sm transition cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${checkingConnection ? 'animate-spin' : ''}`} />
+              <span>{checkingConnection ? 'Checking...' : 'Connection check'}</span>
+            </button>
+          </div>
+
+          {connectionResult && (
+            <div
+              className={`p-3.5 rounded-2xl border text-xs space-y-2 ${
+                connectionResult.status === 'Secret matches'
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200'
+                  : connectionResult.status === 'Secret does not match' ||
+                    connectionResult.status === 'No secret received'
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200'
+                  : 'bg-rose-500/10 border-rose-500/30 text-rose-900 dark:text-rose-200'
+              }`}
+            >
+              <div className="flex items-center gap-2 font-bold">
+                {connectionResult.status === 'Secret matches' ? (
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                ) : connectionResult.status === 'Cannot reach script' ? (
+                  <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                )}
+                <span>{connectionResult.status}</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] font-mono bg-white/60 dark:bg-slate-900/50 rounded-xl p-2.5 border border-black/5 dark:border-white/5">
+                <div>
+                  <span className="block text-slate-500 dark:text-slate-400 font-sans">App sends length</span>
+                  <strong>{connectionResult.sentLength} chars</strong>
+                </div>
+                <div>
+                  <span className="block text-slate-500 dark:text-slate-400 font-sans">First / last char</span>
+                  <strong>
+                    {formatSecretCharsLabel({
+                      length: connectionResult.sentLength,
+                      firstChar: connectionResult.firstChar,
+                      lastChar: connectionResult.lastChar,
+                    })}
+                  </strong>
+                </div>
+                <div>
+                  <span className="block text-slate-500 dark:text-slate-400 font-sans">Script expects</span>
+                  <strong>
+                    {connectionResult.expectedLength !== null
+                      ? `${connectionResult.expectedLength} chars`
+                      : 'Unavailable'}
+                  </strong>
+                </div>
+              </div>
+              <p className="text-[11px] leading-relaxed">{connectionResult.detail}</p>
+            </div>
+          )}
         </div>
 
         {/* Reset & Done Footer */}

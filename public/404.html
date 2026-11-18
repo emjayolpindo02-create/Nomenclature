@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>I-LAB</title>
+    <script>
+      (function () {
+        var l = window.location;
+        var baseSegments = l.pathname.split('/').filter(Boolean);
+        // Preserve base repo folder on GitHub Pages project sites if present, fallback to root
+        var base = baseSegments.length > 0 && !['practice', 'libraries', 'wizard', 'periodic-table', 'converter', 'crisscross', 'oxidation-solver', 'flashcards', 'rule'].includes(baseSegments[0])
+          ? '/' + baseSegments[0] + '/'
+          : '/';
+        var target = base + (l.search || '');
+        window.location.replace(l.protocol + '//' + l.host + target);
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>

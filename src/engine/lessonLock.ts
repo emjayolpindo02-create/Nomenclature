@@ -21,7 +21,9 @@ export const CURRICULUM_SEQUENCE: CurriculumItem[] = [
 export type LockReason =
   | 'unlocked'
   | 'needs-score'
-  | 'wait-next-day';
+  | 'wait-next-day'
+  | 'awaiting-sync'
+  | 'clock-backward';
 
 export interface LessonUnlockStatus {
   unlocked: boolean;
@@ -34,6 +36,13 @@ export interface LessonUnlockStatus {
   unlockDate: string | null;
   msUntilUnlock: number;
   countdownLabel: string | null;
+}
+
+export interface UnlockEvaluationOptions {
+  waitingTimeHours?: number;
+  unlockOverrides?: string[];
+  highWaterNowMs?: number | null;
+  clockDriftToleranceMs?: number;
 }
 
 /**
@@ -63,15 +72,16 @@ export function getNextCalendarDayKey(dateKey: string): string {
 }
 
 /**
- * Extracts a YYYY-MM-DD local date key from a PracticeProgress record.
+ * Extracts an official YYYY-MM-DD date key from a submitted PracticeProgress record.
  */
 export function getPassedDateKey(prog: PracticeProgress | undefined): string | null {
-  if (!prog || !prog.passed) return null;
-  if (prog.passedDate && /^\d{4}-\d{2}-\d{2}$/.test(prog.passedDate)) {
-    return prog.passedDate;
+  if (!prog || !prog.passed || !prog.submitted) return null;
+  const candidate = prog.officialPassDate || prog.passedDate;
+  if (candidate && /^\d{4}-\d{2}-\d{2}$/.test(candidate)) {
+    return candidate;
   }
-  if (prog.completedAt) {
-    const parsed = new Date(prog.completedAt);
+  if (prog.passedAt) {
+    const parsed = new Date(prog.passedAt);
     if (!Number.isNaN(parsed.getTime())) {
       return getLocalDateKey(parsed);
     }
@@ -126,14 +136,17 @@ export function formatReadableDateKey(dateKey: string): string {
 
 /**
  * Determines whether a lesson or practice set is unlocked based on:
- * 1. Acquiring at least `requiredScore` on the previous lesson's practice set.
- * 2. Waiting until the next calendar day arrives after passing the previous lesson.
+ * 1. Explicit teacher override (`unlockOverrides`).
+ * 2. Monotonic clock-backward protection (`highWaterNowMs` & `passedAt`).
+ * 3. A SUBMITTED score >= `requiredScore` on the previous lesson.
+ * 4. Official server pass date + arrival of the next calendar day (and optional `waitingTimeHours`).
  */
 export function getLessonUnlockStatus(
   lessonId: string,
   progressMap: Record<string, PracticeProgress>,
   requiredScore: number = 70,
-  now: Date = new Date()
+  now: Date = new Date(),
+  options: UnlockEvaluationOptions = {}
 ): LessonUnlockStatus {
   const idx = CURRICULUM_SEQUENCE.findIndex((item) => item.id === lessonId);
 
@@ -156,7 +169,27 @@ export function getLessonUnlockStatus(
   const prev = CURRICULUM_SEQUENCE[idx - 1];
   const prevProg = progressMap[prev.id];
   const prevBestScore = prevProg?.bestScore ?? 0;
-  const hasAcquiredScore = !!prevProg?.passed && prevBestScore >= requiredScore;
+
+  // Teacher manual override unlocks immediately
+  if (options.unlockOverrides?.includes(lessonId)) {
+    return {
+      unlocked: true,
+      reason: 'unlocked',
+      previousId: prev.id,
+      previousTitle: prev.title,
+      requiredScore,
+      previousBestScore: prevBestScore,
+      passedDate: getPassedDateKey(prevProg),
+      unlockDate: null,
+      msUntilUnlock: 0,
+      countdownLabel: null,
+    };
+  }
+
+  // Unsubmitted scores never unlock the next topic
+  const isSubmitted = prevProg?.submitted === true;
+  const hasAcquiredScore =
+    isSubmitted && !!prevProg?.passed && prevBestScore >= requiredScore;
 
   if (!hasAcquiredScore) {
     return {
@@ -173,13 +206,67 @@ export function getLessonUnlockStatus(
     };
   }
 
+  // Require an official server pass date before unlocking tomorrow
   const passedDate = getPassedDateKey(prevProg);
-  // If somehow marked passed without any date, treat as passed today so it cannot bypass the next-day gate
-  const effectivePassedDate = passedDate || getLocalDateKey(now);
-  const unlockDate = getNextCalendarDayKey(effectivePassedDate);
+  if (!passedDate) {
+    return {
+      unlocked: false,
+      reason: 'awaiting-sync',
+      previousId: prev.id,
+      previousTitle: prev.title,
+      requiredScore,
+      previousBestScore: prevBestScore,
+      passedDate: null,
+      unlockDate: null,
+      msUntilUnlock: 0,
+      countdownLabel: null,
+    };
+  }
+
+  const tolerance = options.clockDriftToleranceMs ?? 60_000;
+  const nowMs = now.getTime();
   const todayKey = getLocalDateKey(now);
 
-  if (todayKey >= unlockDate) {
+  // Detect backward device clock manipulation
+  const passedAtMs = prevProg?.passedAt ? Date.parse(prevProg.passedAt) : NaN;
+  const movedBeforeHighWater =
+    typeof options.highWaterNowMs === 'number' &&
+    options.highWaterNowMs > 0 &&
+    nowMs < options.highWaterNowMs - tolerance;
+  const movedBeforePassTime =
+    !Number.isNaN(passedAtMs) && nowMs < passedAtMs - tolerance;
+  const movedBeforePassDay = todayKey < passedDate;
+
+  if (movedBeforeHighWater || movedBeforePassTime || movedBeforePassDay) {
+    const unlockDate = getNextCalendarDayKey(passedDate);
+    return {
+      unlocked: false,
+      reason: 'clock-backward',
+      previousId: prev.id,
+      previousTitle: prev.title,
+      requiredScore,
+      previousBestScore: prevBestScore,
+      passedDate,
+      unlockDate,
+      msUntilUnlock: Math.max(
+        getMsUntilDateKey(unlockDate, now),
+        options.highWaterNowMs ? options.highWaterNowMs - nowMs : 0
+      ),
+      countdownLabel: 'Clock check required',
+    };
+  }
+
+  const unlockDate = getNextCalendarDayKey(passedDate);
+  const waitingHours = Math.max(0, options.waitingTimeHours ?? 0);
+  const waitHoursTargetMs =
+    waitingHours > 0 && !Number.isNaN(passedAtMs)
+      ? passedAtMs + waitingHours * 3600_000
+      : 0;
+
+  const calendarUnlocked = todayKey >= unlockDate;
+  const hoursUnlocked = waitHoursTargetMs === 0 || nowMs >= waitHoursTargetMs;
+
+  if (calendarUnlocked && hoursUnlocked) {
     return {
       unlocked: true,
       reason: 'unlocked',
@@ -187,14 +274,16 @@ export function getLessonUnlockStatus(
       previousTitle: prev.title,
       requiredScore,
       previousBestScore: prevBestScore,
-      passedDate: effectivePassedDate,
+      passedDate,
       unlockDate,
       msUntilUnlock: 0,
       countdownLabel: null,
     };
   }
 
-  const msUntilUnlock = getMsUntilDateKey(unlockDate, now);
+  const msUntilCalendar = getMsUntilDateKey(unlockDate, now);
+  const msUntilHours = waitHoursTargetMs > 0 ? Math.max(0, waitHoursTargetMs - nowMs) : 0;
+  const msUntilUnlock = Math.max(msUntilCalendar, msUntilHours);
 
   return {
     unlocked: false,
@@ -203,7 +292,7 @@ export function getLessonUnlockStatus(
     previousTitle: prev.title,
     requiredScore,
     previousBestScore: prevBestScore,
-    passedDate: effectivePassedDate,
+    passedDate,
     unlockDate,
     msUntilUnlock,
     countdownLabel: formatCountdown(msUntilUnlock),

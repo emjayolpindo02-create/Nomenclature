@@ -50,7 +50,6 @@ export const Navigation: React.FC<NavigationProps> = ({
 
   const handleLibraryClick = (id: string) => {
     onSelectLibrary(id);
-    onSelectTab('libraries');
     setLibraryMenuOpen(false);
     setMobileMenuOpen(false);
   };
@@ -75,7 +74,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   setLibraryMenuOpen(!libraryMenuOpen);
                   setToolsMenuOpen(false);
                 }}
-                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer text-xs font-semibold ${
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer text-xs font-semibold whitespace-nowrap shrink-0 ${
                   currentTab === 'libraries'
                     ? 'bg-sky-600 text-white shadow-xs'
                     : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800'
@@ -94,16 +93,19 @@ export const Navigation: React.FC<NavigationProps> = ({
                 >
                   <div className="px-3.5 py-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
                     <span>Rule Libraries (8)</span>
-                    <span className="text-[10px] font-normal normal-case">Score + Next Day</span>
+                    <span className="text-[10px] font-normal normal-case">Submit Score + Next Day</span>
                   </div>
                   {LIBRARY_RULES.map((rule) => {
                     const status = getUnlockStatus(rule.id);
-                    const isPassed = !!progressMap[rule.id]?.passed;
+                    const isPassed = Boolean(
+                      progressMap[rule.id]?.submitted && progressMap[rule.id]?.passed
+                    );
                     const isActive = currentLibraryId === rule.id && currentTab === 'libraries';
 
                     return (
                       <button
                         key={rule.id}
+                        type="button"
                         onClick={() => handleLibraryClick(rule.id)}
                         className={`w-full px-3.5 py-2.5 text-left text-xs font-medium transition flex items-center justify-between gap-2 cursor-pointer ${
                           isActive
@@ -115,7 +117,9 @@ export const Navigation: React.FC<NavigationProps> = ({
                       >
                         <span className="flex items-center gap-2 min-w-0">
                           {!status.unlocked ? (
-                            status.reason === 'wait-next-day' ? (
+                            status.reason === 'wait-next-day' ||
+                            status.reason === 'awaiting-sync' ||
+                            status.reason === 'clock-backward' ? (
                               <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                             ) : (
                               <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -131,13 +135,19 @@ export const Navigation: React.FC<NavigationProps> = ({
                         {!status.unlocked && (
                           <span
                             className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${
-                              status.reason === 'wait-next-day'
+                              status.reason === 'wait-next-day' ||
+                              status.reason === 'awaiting-sync' ||
+                              status.reason === 'clock-backward'
                                 ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
                             }`}
                           >
                             {status.reason === 'wait-next-day'
                               ? `Next day (${status.countdownLabel})`
+                              : status.reason === 'awaiting-sync'
+                              ? 'Awaiting Sync'
+                              : status.reason === 'clock-backward'
+                              ? 'Clock Check'
                               : `Score ≥${status.requiredScore}%`}
                           </span>
                         )}
@@ -150,12 +160,13 @@ export const Navigation: React.FC<NavigationProps> = ({
 
             {/* Doctor Nomen Button */}
             <button
+              type="button"
               onClick={() => {
                 onSelectTab('wizard');
                 setLibraryMenuOpen(false);
                 setToolsMenuOpen(false);
               }}
-              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer text-xs font-semibold ${
+              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer text-xs font-semibold whitespace-nowrap shrink-0 ${
                 currentTab === 'wizard'
                   ? 'bg-sky-600 text-white shadow-xs'
                   : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800'
@@ -173,7 +184,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   setToolsMenuOpen(!toolsMenuOpen);
                   setLibraryMenuOpen(false);
                 }}
-                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer text-xs font-semibold ${
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer text-xs font-semibold whitespace-nowrap shrink-0 ${
                   ['crisscross', 'oxidation-solver', 'flashcards', 'converter'].includes(currentTab)
                     ? 'bg-sky-600 text-white shadow-xs'
                     : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800'
@@ -191,6 +202,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   onMouseLeave={() => setToolsMenuOpen(false)}
                 >
                   <button
+                    type="button"
                     onClick={() => handleToolClick('crisscross')}
                     className="w-full px-4 py-2.5 text-left text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition cursor-pointer"
                   >
@@ -202,6 +214,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   </button>
 
                   <button
+                    type="button"
                     onClick={() => handleToolClick('oxidation-solver')}
                     className="w-full px-4 py-2.5 text-left text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition cursor-pointer"
                   >
@@ -213,6 +226,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   </button>
 
                   <button
+                    type="button"
                     onClick={() => handleToolClick('flashcards')}
                     className="w-full px-4 py-2.5 text-left text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition cursor-pointer"
                   >
@@ -224,6 +238,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   </button>
 
                   <button
+                    type="button"
                     onClick={() => handleToolClick('converter')}
                     className="w-full px-4 py-2.5 text-left text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition cursor-pointer"
                   >
@@ -239,12 +254,13 @@ export const Navigation: React.FC<NavigationProps> = ({
 
             {/* Periodic Table Button */}
             <button
+              type="button"
               onClick={() => {
                 onSelectTab('periodic-table');
                 setLibraryMenuOpen(false);
                 setToolsMenuOpen(false);
               }}
-              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer text-xs font-semibold ${
+              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer text-xs font-semibold whitespace-nowrap shrink-0 ${
                 currentTab === 'periodic-table'
                   ? 'bg-sky-600 text-white shadow-xs'
                   : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800'
@@ -256,12 +272,13 @@ export const Navigation: React.FC<NavigationProps> = ({
 
             {/* Practice Curriculum Button */}
             <button
+              type="button"
               onClick={() => {
                 onSelectTab('practice');
                 setLibraryMenuOpen(false);
                 setToolsMenuOpen(false);
               }}
-              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer text-xs font-semibold ${
+              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer text-xs font-semibold whitespace-nowrap shrink-0 ${
                 currentTab === 'practice'
                   ? 'bg-sky-600 text-white shadow-xs'
                   : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800'
@@ -285,7 +302,7 @@ export const Navigation: React.FC<NavigationProps> = ({
             {currentTab === 'flashcards' && <span>Prefix &amp; Ending Flip Cards</span>}
             {currentTab === 'converter' && <span>Name ↔ Formula Converter</span>}
             {currentTab === 'periodic-table' && <span>Periodic Table (118 Elements)</span>}
-            {currentTab === 'practice' && <span>Locked Practice Sets</span>}
+            {currentTab === 'practice' && <span>Practice Sets</span>}
           </div>
         </div>
 
@@ -303,6 +320,7 @@ export const Navigation: React.FC<NavigationProps> = ({
           </div>
 
           <button
+            type="button"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="p-1.5 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 transition cursor-pointer"
             aria-label="Toggle navigation menu"
@@ -320,6 +338,7 @@ export const Navigation: React.FC<NavigationProps> = ({
               </span>
               <div className="grid grid-cols-2 gap-1.5">
                 <button
+                  type="button"
                   onClick={() => {
                     onSelectTab('wizard');
                     setMobileMenuOpen(false);
@@ -333,6 +352,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => {
                     onSelectTab('periodic-table');
                     setMobileMenuOpen(false);
@@ -346,6 +366,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => {
                     onSelectTab('practice');
                     setMobileMenuOpen(false);
@@ -359,6 +380,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => {
                     onSelectTab('converter');
                     setMobileMenuOpen(false);
@@ -380,18 +402,21 @@ export const Navigation: React.FC<NavigationProps> = ({
               </span>
               <div className="grid grid-cols-1 gap-1">
                 <button
+                  type="button"
                   onClick={() => handleToolClick('crisscross')}
                   className="w-full p-2 rounded-lg text-left text-xs font-medium bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
                 >
                   ⚡ Criss-Cross Formula Builder
                 </button>
                 <button
+                  type="button"
                   onClick={() => handleToolClick('oxidation-solver')}
                   className="w-full p-2 rounded-lg text-left text-xs font-medium bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
                 >
                   🧮 Oxidation Number Solver
                 </button>
                 <button
+                  type="button"
                   onClick={() => handleToolClick('flashcards')}
                   className="w-full p-2 rounded-lg text-left text-xs font-medium bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
                 >
@@ -400,7 +425,7 @@ export const Navigation: React.FC<NavigationProps> = ({
               </div>
             </div>
 
-            {/* 8 Libraries List with Lock Badges */}
+            {/* 8 Libraries List with Lock Icons */}
             <div className="space-y-1 pt-2 border-t border-slate-200 dark:border-slate-800">
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-2">
                 Rule Libraries (8)
@@ -411,6 +436,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   return (
                     <button
                       key={rule.id}
+                      type="button"
                       onClick={() => handleLibraryClick(rule.id)}
                       className={`w-full p-2 rounded-lg text-left text-xs transition flex items-center justify-between gap-2 ${
                         currentLibraryId === rule.id && currentTab === 'libraries'
