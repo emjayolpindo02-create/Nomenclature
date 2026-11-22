@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { UserSettings } from '../types/chemistry';
 import { useAuth } from './AuthContext';
+import { safeGetItem, safeRemoveItem, safeSetItem } from '../utils/safeStorage';
 
 const DEFAULT_SETTINGS: UserSettings = {
   theme: 'system',
@@ -24,12 +25,12 @@ function getStorageKey(username: string | undefined): string {
 
 function loadSettingsForUser(username: string | undefined): UserSettings {
   try {
-    const stored = localStorage.getItem(getStorageKey(username));
+    const stored = safeGetItem(getStorageKey(username));
     if (stored) {
       return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
     }
   } catch (e) {
-    console.warn('Could not read settings from localStorage:', e);
+    console.warn('Could not read settings from storage:', e);
   }
   return DEFAULT_SETTINGS;
 }
@@ -47,11 +48,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [settings, setSettings] = useState<UserSettings>(() => loadSettingsForUser(undefined));
 
   useEffect(() => {
-    try {
-      localStorage.removeItem(LEGACY_STORAGE_KEY);
-    } catch {
-      // ignore storage errors
-    }
+    safeRemoveItem(LEGACY_STORAGE_KEY);
   }, []);
 
   // Load user-scoped settings when signed-in username changes
@@ -64,11 +61,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [user?.username, sectionPolicy.passingScore]);
 
   const persistSettings = (updated: UserSettings) => {
-    try {
-      localStorage.setItem(getStorageKey(user?.username), JSON.stringify(updated));
-    } catch (e) {
-      console.warn('Could not save settings to localStorage:', e);
-    }
+    safeSetItem(getStorageKey(user?.username), JSON.stringify(updated));
   };
 
   const updateSettings = (partial: Partial<UserSettings>) => {

@@ -9,6 +9,8 @@ import {
   LogOut,
   ShieldCheck,
   AlertCircle,
+  CheckCircle2,
+  WifiOff,
   X,
   KeyRound,
   RefreshCw,
@@ -22,9 +24,18 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onNavigateHome }) => {
-  const { badges, queuedAttempts, isSyncingQueue, syncOfflineQueueNow } = useProgress();
+  const {
+    badges,
+    queuedAttempts,
+    isSyncingQueue,
+    syncStatus,
+    manualSyncNow,
+    clearSyncStatus,
+  } = useProgress();
   const { user, authError, openSignInModal, signOut, clearAuthError } = useAuth();
   const unlockedBadgesCount = badges.filter((b) => b.unlocked).length;
+  const hasPendingQueue = Boolean(user && queuedAttempts.length > 0);
+  const isOnlineNow = typeof navigator === 'undefined' ? true : navigator.onLine !== false;
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200/80 dark:border-slate-800/80 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md transition-colors">
@@ -45,22 +56,39 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onNavigateHome }
           </div>
         </button>
 
-        {/* Right Action Icons: Offline, Queue Sync, PWA Install, Badges, Account, Settings */}
+        {/* Right Action Icons: Offline, Manual Sync, PWA Install, Badges, Account, Settings */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
           <OfflineIndicator />
 
-          {user && queuedAttempts.length > 0 && (
-            <button
-              type="button"
-              onClick={() => void syncOfflineQueueNow()}
-              disabled={isSyncingQueue}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs font-semibold cursor-pointer whitespace-nowrap"
-              title="Sync queued practice attempts to your teacher sheet"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingQueue ? 'animate-spin' : ''}`} />
-              <span>{queuedAttempts.length} Queued</span>
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => void manualSyncNow()}
+            disabled={isSyncingQueue}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition cursor-pointer whitespace-nowrap disabled:opacity-70 disabled:cursor-wait ${
+              hasPendingQueue
+                ? 'bg-amber-500/15 border-amber-500/35 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25'
+                : 'bg-sky-500/10 border-sky-500/30 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20'
+            }`}
+            aria-label={
+              hasPendingQueue
+                ? `Sync ${queuedAttempts.length} pending score${queuedAttempts.length === 1 ? '' : 's'} with Google Sheets`
+                : 'Sync local progress with Google Sheets'
+            }
+            title={
+              hasPendingQueue
+                ? `Check connection and sync ${queuedAttempts.length} pending score(s) with Google Sheets`
+                : 'Check online status and sync local data with Google Sheets'
+            }
+          >
+            <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${isSyncingQueue ? 'animate-spin' : ''}`} />
+            <span>
+              {isSyncingQueue
+                ? 'Syncing...'
+                : hasPendingQueue
+                ? `Sync (${queuedAttempts.length})`
+                : 'Sync'}
+            </span>
+          </button>
 
           <PWAInstallButton />
 
@@ -77,7 +105,10 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onNavigateHome }
 
           {/* Student Session Control */}
           {user ? (
-            <div className="flex items-center gap-1 pl-2 pr-1 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
+            <div
+              data-guide-id="header-signin"
+              className="flex items-center gap-1 pl-2 pr-1 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30"
+            >
               <ShieldCheck
                 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"
                 aria-hidden="true"
@@ -112,6 +143,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onNavigateHome }
           ) : (
             <button
               type="button"
+              data-guide-id="header-signin"
               onClick={() =>
                 openSignInModal({
                   reason:
@@ -138,6 +170,51 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onNavigateHome }
           </button>
         </div>
       </div>
+
+      {/* Manual Sync Feedback Banner */}
+      {syncStatus && syncStatus.state !== 'syncing' && (
+        <div
+          role="status"
+          className={`text-xs py-1.5 px-4 flex items-center justify-center gap-2 text-white ${
+            syncStatus.state === 'success'
+              ? 'bg-emerald-600'
+              : syncStatus.state === 'offline'
+              ? 'bg-amber-600'
+              : 'bg-rose-600'
+          }`}
+        >
+          {syncStatus.state === 'success' ? (
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+          ) : syncStatus.state === 'offline' ? (
+            <WifiOff className="w-3.5 h-3.5 shrink-0" />
+          ) : (
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          )}
+          <span>{syncStatus.message}</span>
+          {!user && isOnlineNow && syncStatus.state === 'offline' && (
+            <button
+              type="button"
+              onClick={() => {
+                clearSyncStatus();
+                openSignInModal({
+                  reason: 'Sign in with your username and PIN to sync with Google Sheets.',
+                });
+              }}
+              className="underline font-bold hover:text-white/90 cursor-pointer ml-1"
+            >
+              Sign In
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={clearSyncStatus}
+            className="p-0.5 rounded hover:bg-white/20 cursor-pointer"
+            aria-label="Dismiss sync status notice"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Auth Error Banner if sign-in fails */}
       {authError && !user && (

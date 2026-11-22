@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { PracticeProgress } from '../types/chemistry';
 import { PRACTICE_SETS } from '../data/practiceQuestions';
 import { useSettings } from './SettingsContext';
@@ -14,10 +14,17 @@ import {
   enqueueOfflineAttempt,
   flushOfflineQueue,
   mergeProgressMaps,
+  mergeQueuedAttemptLists,
   QueuedAttempt,
   StudentSession,
 } from '../engine/sheetsSync';
 import { saveStudentAttempt } from '../services/sheetsClient';
+import { safeGetItem, safeRemoveItem, safeSetItem } from '../utils/safeStorage';
+import {
+  readOfflineRecord,
+  removeOfflineRecord,
+  writeOfflineRecord,
+} from '../utils/offlineDb';
 
 const LEGACY_PROGRESS_KEY = 'compound_naming_guide_progress_v1';
 const QUEUE_STORAGE_KEY = 'ilab_attempt_queue_v1';
@@ -56,14 +63,24 @@ export interface SubmitPracticeResult {
   message?: string;
 }
 
+export interface SyncStatus {
+  state: 'idle' | 'syncing' | 'success' | 'offline' | 'error';
+  message: string;
+  updatedAtMs: number;
+}
+
 interface ProgressContextType {
   progressMap: Record<string, PracticeProgress>;
   unlockOverrides: string[];
   queuedAttempts: QueuedAttempt[];
   isSyncingQueue: boolean;
+  lastSyncError: string | null;
+  syncStatus: SyncStatus | null;
   progressLoading: boolean;
   submitPracticeAttempt: (input: SubmitPracticeInput) => Promise<SubmitPracticeResult>;
   syncOfflineQueueNow: () => Promise<void>;
+  manualSyncNow: () => Promise<void>;
+  clearSyncStatus: () => void;
   isLibraryUnlocked: (libraryId: string) => boolean;
   getUnlockStatus: (libraryId: string) => LessonUnlockStatus;
   getPreviousLibraryTitle: (libraryId: string) => string | null;
@@ -75,7 +92,7 @@ const ProgressContext = createContext<ProgressContextType | null>(null);
 
 function loadQueue(): QueuedAttempt[] {
   try {
-    const raw = localStorage.getItem(QUEUE_STORAGE_KEY);
+    const raw = safeGetItem(QUEUE_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -93,6 +110,7 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     clockHighWaterMs,
     remoteSync,
     applyRemoteSyncData,
+    refreshSessionFromServer,
     handleExpiredSession,
   } = useAuth();
 
@@ -100,36 +118,103 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [unlockOverrides, setUnlockOverrides] = useState<string[]>([]);
   const [queuedAttempts, setQueuedAttempts] = useState<QueuedAttempt[]>(() => loadQueue());
   const [isSyncingQueue, setIsSyncingQueue] = useState<boolean>(false);
+  const [lastSyncError, setLastSyncError] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [progressLoading, setProgressLoading] = useState<boolean>(false);
   const [now, setNow] = useState<Date>(() => new Date());
 
-  const saveQueue = useCallback((nextQueue: QueuedAttempt[]) => {
-    setQueuedAttempts(nextQueue);
-    try {
-      localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(nextQueue));
-    } catch {
-      // ignore
+  const isSyncingRef = useRef<boolean>(false);
+  const queuedAttemptsRef = useRef<QueuedAttempt[]>(queuedAttempts);
+  queuedAttemptsRef.current = queuedAttempts;
+  const progressMapRef = useRef<Record<string, PracticeProgress>>(progressMap);
+  progressMapRef.current = progressMap;
+  const syncNoticeTimerRef = useRef<number | null>(null);
+
+  const publishSyncStatus = useCallback(
+    (state: SyncStatus['state'], message: string, autoClearMs?: number) => {
+      if (syncNoticeTimerRef.current !== null && typeof window !== 'undefined') {
+        window.clearTimeout(syncNoticeTimerRef.current);
+        syncNoticeTimerRef.current = null;
+      }
+      setSyncStatus({ state, message, updatedAtMs: Date.now() });
+      if (autoClearMs && typeof window !== 'undefined') {
+        syncNoticeTimerRef.current = window.setTimeout(() => {
+          setSyncStatus(null);
+          syncNoticeTimerRef.current = null;
+        }, autoClearMs);
+      }
+    },
+    []
+  );
+
+  const clearSyncStatus = useCallback(() => {
+    if (syncNoticeTimerRef.current !== null && typeof window !== 'undefined') {
+      window.clearTimeout(syncNoticeTimerRef.current);
+      syncNoticeTimerRef.current = null;
     }
+    setSyncStatus(null);
   }, []);
+
+  const persistProgressForUser = useCallback(
+    (username: string, map: Record<string, PracticeProgress>) => {
+      const key = getProgressStorageKey(username);
+      safeSetItem(key, JSON.stringify(map));
+      void writeOfflineRecord(key, map);
+    },
+    []
+  );
+
+  const persistOverridesForUser = useCallback((username: string, overrides: string[]) => {
+    const key = getOverridesStorageKey(username);
+    safeSetItem(key, JSON.stringify(overrides));
+    void writeOfflineRecord(key, overrides);
+  }, []);
+
+  const saveQueue = useCallback((nextQueue: QueuedAttempt[]) => {
+    queuedAttemptsRef.current = nextQueue;
+    setQueuedAttempts(nextQueue);
+    safeSetItem(QUEUE_STORAGE_KEY, JSON.stringify(nextQueue));
+    void writeOfflineRecord(QUEUE_STORAGE_KEY, nextQueue);
+  }, []);
+
+  // Reconcile IndexedDB and localStorage for queued attempts on mount
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const idbQueue = await readOfflineRecord<QueuedAttempt[]>(QUEUE_STORAGE_KEY);
+      if (cancelled) return;
+      const localQueue = queuedAttemptsRef.current;
+      if (Array.isArray(idbQueue) && idbQueue.length > 0) {
+        const merged = mergeQueuedAttemptLists(localQueue, idbQueue);
+        saveQueue(merged);
+      } else if (localQueue.length > 0) {
+        void writeOfflineRecord(QUEUE_STORAGE_KEY, localQueue);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [saveQueue]);
 
   // Refresh clock every 30s so next-day unlocks activate automatically when midnight passes
   useEffect(() => {
     const interval = setInterval(() => {
       setNow(new Date());
     }, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (syncNoticeTimerRef.current !== null) {
+        window.clearTimeout(syncNoticeTimerRef.current);
+      }
+    };
   }, []);
 
   // Clean up legacy unscoped progress key
   useEffect(() => {
-    try {
-      localStorage.removeItem(LEGACY_PROGRESS_KEY);
-    } catch {
-      // ignore
-    }
+    safeRemoveItem(LEGACY_PROGRESS_KEY);
   }, []);
 
-  // Hydrate user-scoped local progress & overrides when active user changes
+  // Hydrate user-scoped local progress & overrides from localStorage + IndexedDB when active user changes
   useEffect(() => {
     if (!user?.username) {
       setProgressMap({});
@@ -138,20 +223,61 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return;
     }
 
-    try {
-      const cached = localStorage.getItem(getProgressStorageKey(user.username));
-      setProgressMap(cached ? JSON.parse(cached) : {});
-    } catch {
-      setProgressMap({});
-    }
+    const activeUsername = user.username;
+    const progressKey = getProgressStorageKey(activeUsername);
+    const overridesKey = getOverridesStorageKey(activeUsername);
 
+    let initialMap: Record<string, PracticeProgress> = {};
     try {
-      const cachedOverrides = localStorage.getItem(getOverridesStorageKey(user.username));
-      setUnlockOverrides(cachedOverrides ? JSON.parse(cachedOverrides) : []);
+      const cached = safeGetItem(progressKey);
+      initialMap = cached ? JSON.parse(cached) : {};
     } catch {
-      setUnlockOverrides([]);
+      initialMap = {};
     }
-  }, [user?.username]);
+    setProgressMap(initialMap);
+
+    let initialOverrides: string[] = [];
+    try {
+      const cachedOverrides = safeGetItem(overridesKey);
+      initialOverrides = cachedOverrides ? JSON.parse(cachedOverrides) : [];
+    } catch {
+      initialOverrides = [];
+    }
+    setUnlockOverrides(initialOverrides);
+
+    let cancelled = false;
+    void (async () => {
+      const [idbMap, idbOverrides] = await Promise.all([
+        readOfflineRecord<Record<string, PracticeProgress>>(progressKey),
+        readOfflineRecord<string[]>(overridesKey),
+      ]);
+      if (cancelled) return;
+
+      if (idbMap && typeof idbMap === 'object' && Object.keys(idbMap).length > 0) {
+        setProgressMap((prev) => {
+          const merged = mergeProgressMaps(idbMap, prev);
+          persistProgressForUser(activeUsername, merged);
+          return merged;
+        });
+      } else if (Object.keys(initialMap).length > 0) {
+        void writeOfflineRecord(progressKey, initialMap);
+      }
+
+      if (Array.isArray(idbOverrides) && idbOverrides.length > 0) {
+        setUnlockOverrides((prev) => {
+          const combined = Array.from(new Set([...prev, ...idbOverrides]));
+          persistOverridesForUser(activeUsername, combined);
+          return combined;
+        });
+      } else if (initialOverrides.length > 0) {
+        void writeOfflineRecord(overridesKey, initialOverrides);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.username, persistProgressForUser, persistOverridesForUser]);
 
   // Apply authoritative progress & overrides whenever remoteSync updates from Google Sheets
   useEffect(() => {
@@ -161,27 +287,16 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (remoteSync.progressMap) {
       setProgressMap((prev) => {
         const merged = mergeProgressMaps(prev, remoteSync.progressMap || {});
-        try {
-          localStorage.setItem(getProgressStorageKey(user.username), JSON.stringify(merged));
-        } catch {
-          // ignore
-        }
+        persistProgressForUser(user.username, merged);
         return merged;
       });
     }
 
     if (remoteSync.unlockOverrides) {
       setUnlockOverrides(remoteSync.unlockOverrides);
-      try {
-        localStorage.setItem(
-          getOverridesStorageKey(user.username),
-          JSON.stringify(remoteSync.unlockOverrides)
-        );
-      } catch {
-        // ignore
-      }
+      persistOverridesForUser(user.username, remoteSync.unlockOverrides);
     }
-  }, [remoteSync, user?.username]);
+  }, [remoteSync, user?.username, persistProgressForUser, persistOverridesForUser]);
 
   const calculateBadges = useCallback((map: Record<string, PracticeProgress>): Badge[] => {
     const isPassed = (id: string) => Boolean(map[id]?.submitted && map[id]?.passed);
@@ -246,19 +361,63 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     ];
   }, []);
 
-  const syncOfflineQueueNow = useCallback(async () => {
-    if (!session || isSyncingQueue) return;
-    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+  const reconcileLocalStores = useCallback(
+    async (activeUsername?: string): Promise<QueuedAttempt[]> => {
+      const idbQueue = await readOfflineRecord<QueuedAttempt[]>(QUEUE_STORAGE_KEY);
+      let mergedQueue = queuedAttemptsRef.current;
+      if (Array.isArray(idbQueue) && idbQueue.length > 0) {
+        mergedQueue = mergeQueuedAttemptLists(mergedQueue, idbQueue);
+        saveQueue(mergedQueue);
+      } else if (mergedQueue.length > 0) {
+        void writeOfflineRecord(QUEUE_STORAGE_KEY, mergedQueue);
+      }
 
-    const studentPending = queuedAttempts.filter(
+      if (activeUsername) {
+        const progressKey = getProgressStorageKey(activeUsername);
+        const overridesKey = getOverridesStorageKey(activeUsername);
+        const [idbMap, idbOverrides] = await Promise.all([
+          readOfflineRecord<Record<string, PracticeProgress>>(progressKey),
+          readOfflineRecord<string[]>(overridesKey),
+        ]);
+
+        if (idbMap && typeof idbMap === 'object' && Object.keys(idbMap).length > 0) {
+          const mergedMap = mergeProgressMaps(idbMap, progressMapRef.current);
+          setProgressMap(mergedMap);
+          persistProgressForUser(activeUsername, mergedMap);
+        } else if (Object.keys(progressMapRef.current).length > 0) {
+          void writeOfflineRecord(progressKey, progressMapRef.current);
+        }
+
+        if (Array.isArray(idbOverrides) && idbOverrides.length > 0) {
+          setUnlockOverrides((prev) => {
+            const combined = Array.from(new Set([...prev, ...idbOverrides]));
+            persistOverridesForUser(activeUsername, combined);
+            return combined;
+          });
+        }
+      }
+
+      return mergedQueue;
+    },
+    [saveQueue, persistProgressForUser, persistOverridesForUser]
+  );
+
+  const syncOfflineQueueNow = useCallback(async () => {
+    if (!session || isSyncingRef.current) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
+    const reconciledQueue = await reconcileLocalStores(session.user.username);
+    const studentPending = reconciledQueue.filter(
       (q) => q.username.toLowerCase() === session.user.username.toLowerCase()
     );
     if (studentPending.length === 0) return;
 
+    isSyncingRef.current = true;
     setIsSyncingQueue(true);
+    setLastSyncError(null);
     try {
       const result = await flushOfflineQueue(
-        queuedAttempts,
+        reconciledQueue,
         session.user.username,
         async (payload) => {
           return saveStudentAttempt(session.sessionToken, payload);
@@ -270,6 +429,10 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (result.sessionExpired) {
         handleExpiredSession(result.lastError || undefined);
         return;
+      }
+
+      if (result.lastError && result.lastError !== 'offline') {
+        setLastSyncError(result.lastError);
       }
 
       if (result.latestProgressMap || result.latestSettings || result.latestUnlockOverrides) {
@@ -284,28 +447,148 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         });
       }
     } finally {
+      isSyncingRef.current = false;
+      setIsSyncingQueue(false);
+    }
+  }, [session, reconcileLocalStores, saveQueue, handleExpiredSession, applyRemoteSyncData]);
+
+  const manualSyncNow = useCallback(async () => {
+    if (isSyncingRef.current) return;
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      publishSyncStatus(
+        'offline',
+        'Offline — your progress and queued scores stay saved locally.',
+        5000
+      );
+      return;
+    }
+
+    isSyncingRef.current = true;
+    setIsSyncingQueue(true);
+    setLastSyncError(null);
+    publishSyncStatus('syncing', 'Checking connection and syncing...');
+
+    try {
+      const reconciledQueue = await reconcileLocalStores(session?.user?.username);
+
+      if (!session) {
+        publishSyncStatus(
+          'offline',
+          'Online — local progress backed up. Sign in to sync with Google Sheets.',
+          5500
+        );
+        return;
+      }
+
+      const studentPending = reconciledQueue.filter(
+        (q) => q.username.toLowerCase() === session.user.username.toLowerCase()
+      );
+
+      let syncedCount = 0;
+      let flushError: string | null = null;
+      let gotProgressFromFlush = false;
+
+      if (studentPending.length > 0) {
+        const result = await flushOfflineQueue(
+          reconciledQueue,
+          session.user.username,
+          async (payload) => {
+            return saveStudentAttempt(session.sessionToken, payload);
+          }
+        );
+
+        saveQueue(result.remainingQueue);
+        syncedCount = result.syncedCount;
+
+        if (result.sessionExpired) {
+          handleExpiredSession(result.lastError || undefined);
+          publishSyncStatus(
+            'error',
+            result.lastError || 'Your session expired. Sign in again to sync.'
+          );
+          return;
+        }
+
+        if (result.lastError) {
+          flushError = result.lastError;
+        }
+
+        if (result.latestProgressMap || result.latestSettings || result.latestUnlockOverrides) {
+          gotProgressFromFlush = true;
+          applyRemoteSyncData({
+            username: session.user.username,
+            progressMap: result.latestProgressMap || undefined,
+            unlockOverrides: result.latestUnlockOverrides || undefined,
+            settings: result.latestSettings || undefined,
+            serverNowIso: result.latestServerNowMs
+              ? new Date(result.latestServerNowMs).toISOString()
+              : undefined,
+          });
+        }
+      }
+
+      const refreshResult = await refreshSessionFromServer();
+
+      if (refreshResult.sessionExpired) {
+        publishSyncStatus(
+          'error',
+          refreshResult.error || 'Your session expired. Sign in again to sync.'
+        );
+        return;
+      }
+
+      if (flushError === 'offline' || refreshResult.error === 'offline') {
+        publishSyncStatus(
+          'offline',
+          'Could not reach Google Sheets right now — data remains safely saved locally.',
+          5000
+        );
+        return;
+      }
+
+      const errMsg =
+        flushError || (!refreshResult.ok && !gotProgressFromFlush ? refreshResult.error : null);
+
+      if (errMsg) {
+        setLastSyncError(errMsg);
+        publishSyncStatus('error', errMsg);
+        return;
+      }
+
+      const successText =
+        syncedCount > 0
+          ? `Synced ${syncedCount} pending score${syncedCount === 1 ? '' : 's'} with Google Sheets.`
+          : 'Synced with Google Sheets. Local state is up to date.';
+      publishSyncStatus('success', successText, 4500);
+    } finally {
+      isSyncingRef.current = false;
       setIsSyncingQueue(false);
     }
   }, [
     session,
-    isSyncingQueue,
-    queuedAttempts,
+    reconcileLocalStores,
     saveQueue,
     handleExpiredSession,
     applyRemoteSyncData,
+    refreshSessionFromServer,
+    publishSyncStatus,
   ]);
+
+  const syncOfflineQueueRef = useRef(syncOfflineQueueNow);
+  syncOfflineQueueRef.current = syncOfflineQueueNow;
 
   // Auto-flush offline queue when signed in or when connection restores
   useEffect(() => {
-    if (!session) return;
-    void syncOfflineQueueNow();
+    if (!session?.sessionToken) return;
+    void syncOfflineQueueRef.current();
 
     const onOnline = () => {
-      void syncOfflineQueueNow();
+      void syncOfflineQueueRef.current();
     };
     window.addEventListener('online', onOnline);
     return () => window.removeEventListener('online', onOnline);
-  }, [session?.sessionToken, syncOfflineQueueNow]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [session?.sessionToken]);
 
   const submitPracticeAttempt = async (
     input: SubmitPracticeInput
@@ -358,11 +641,8 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       const nextMap = mergeProgressMaps(progressMap, res.progressMap || {});
       setProgressMap(nextMap);
-      try {
-        localStorage.setItem(getProgressStorageKey(username), JSON.stringify(nextMap));
-      } catch {
-        // ignore
-      }
+      persistProgressForUser(username, nextMap);
+      setLastSyncError(null);
 
       applyRemoteSyncData({
         username,
@@ -384,14 +664,22 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           res.officialPassDate || nextMap[input.libraryId]?.officialPassDate,
         newBadges,
       };
-    } catch {
+    } catch (err) {
       // Offline or unreachable Apps Script: queue cleanly with deduplication
+      const rawErrMsg = err instanceof Error ? err.message : '';
+      const isOfflineErr =
+        rawErrMsg === 'offline' || (typeof navigator !== 'undefined' && !navigator.onLine);
+      if (!isOfflineErr && rawErrMsg) {
+        setLastSyncError(rawErrMsg);
+      }
+
       const queuedItem: QueuedAttempt = {
         attemptId,
         username,
         payload: { ...payload, wasQueuedOffline: true },
         queuedAt: new Date().toISOString(),
         retryCount: 0,
+        lastError: !isOfflineErr && rawErrMsg ? rawErrMsg : undefined,
       };
       const nextQueue = enqueueOfflineAttempt(queuedAttempts, queuedItem);
       saveQueue(nextQueue);
@@ -411,11 +699,7 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       };
       const nextMap = { ...progressMap, [input.libraryId]: nextEntry };
       setProgressMap(nextMap);
-      try {
-        localStorage.setItem(getProgressStorageKey(username), JSON.stringify(nextMap));
-      } catch {
-        // ignore
-      }
+      persistProgressForUser(username, nextMap);
 
       const currBadges = calculateBadges(nextMap);
       const newBadges = currBadges.filter(
@@ -427,7 +711,9 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         passed,
         newBadges,
         message:
-          'Saved to offline queue. Your official pass date will sync automatically once connected.',
+          !isOfflineErr && rawErrMsg
+            ? `Saved as Pending. ${rawErrMsg}`
+            : 'Saved. Will send when online',
       };
     }
   };
@@ -435,12 +721,12 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const resetLocalProgressCache = () => {
     setProgressMap({});
     if (user?.username) {
-      try {
-        localStorage.removeItem(getProgressStorageKey(user.username));
-        localStorage.removeItem(getOverridesStorageKey(user.username));
-      } catch {
-        // ignore
-      }
+      const progressKey = getProgressStorageKey(user.username);
+      const overridesKey = getOverridesStorageKey(user.username);
+      safeRemoveItem(progressKey);
+      safeRemoveItem(overridesKey);
+      void removeOfflineRecord(progressKey);
+      void removeOfflineRecord(overridesKey);
     }
   };
 
@@ -478,9 +764,13 @@ export const ProgressProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             )
           : [],
         isSyncingQueue,
+        lastSyncError,
+        syncStatus,
         progressLoading,
         submitPracticeAttempt,
         syncOfflineQueueNow,
+        manualSyncNow,
+        clearSyncStatus,
         isLibraryUnlocked,
         getUnlockStatus,
         getPreviousLibraryTitle,

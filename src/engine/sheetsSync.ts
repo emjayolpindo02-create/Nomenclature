@@ -82,6 +82,23 @@ export function dequeueOfflineAttempt(queue: QueuedAttempt[], attemptId: string)
 }
 
 /**
+ * Combines queued attempts from multiple local storage layers (e.g. localStorage and IndexedDB)
+ * while deduplicating by attemptId or identical submission metadata.
+ */
+export function mergeQueuedAttemptLists(
+  primaryQueue: QueuedAttempt[],
+  secondaryQueue: QueuedAttempt[]
+): QueuedAttempt[] {
+  let merged = [...primaryQueue];
+  for (const item of secondaryQueue) {
+    if (item && item.attemptId && item.username && item.payload) {
+      merged = enqueueOfflineAttempt(merged, item);
+    }
+  }
+  return merged;
+}
+
+/**
  * Checks whether a saved session token is still valid and not expired.
  */
 export function isSessionTokenValid(

@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { LibraryRuleContent, ChemicalElement } from '../../types/chemistry';
 import { FormulaRenderer } from '../common/FormulaRenderer';
 import { ColorCodedToken, ColorLegend } from '../common/ColorCodedToken';
 import { useProgress } from '../../context/ProgressContext';
 import { useAuth } from '../../context/AuthContext';
+import { useGuide } from '../../context/GuideContext';
 import { formatReadableDateKey } from '../../engine/lessonLock';
 import {
   BookOpen,
@@ -19,6 +20,7 @@ import {
   Clock,
   ArrowLeft,
   LogIn,
+  Compass,
 } from 'lucide-react';
 
 interface LibraryViewProps {
@@ -36,6 +38,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 }) => {
   const { getUnlockStatus } = useProgress();
   const { user, openSignInModal } = useAuth();
+  const { startTour, activeHighlightId, announceLockedTopic } = useGuide();
   const unlockStatus = getUnlockStatus(rule.id);
 
   // Track which examples are expanded
@@ -44,6 +47,21 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     1: false,
     2: false,
   });
+
+  useEffect(() => {
+    if (activeHighlightId?.startsWith('example-')) {
+      const idx = Number(activeHighlightId.replace('example-', ''));
+      if (!Number.isNaN(idx)) {
+        setExpandedExamples((prev) => ({ ...prev, [idx]: true }));
+      }
+    }
+  }, [activeHighlightId]);
+
+  useEffect(() => {
+    if (!unlockStatus.unlocked) {
+      announceLockedTopic(unlockStatus);
+    }
+  }, [rule.id, unlockStatus.unlocked, unlockStatus.reason, announceLockedTopic]);
 
   const toggleExample = (idx: number) => {
     setExpandedExamples((prev) => ({ ...prev, [idx]: !prev[idx] }));
@@ -199,17 +217,31 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             <span>{rule.title}</span>
           </h1>
 
-          <button
-            onClick={() => onStartPractice(rule.id)}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs uppercase tracking-wider shadow-md transition cursor-pointer"
-          >
-            <PlayCircle className="w-4 h-4" />
-            <span>Practice</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => startTour('library')}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold text-xs border border-white/20 transition cursor-pointer"
+            >
+              <Compass className="w-4 h-4 text-sky-300" />
+              <span>Guided Tour</span>
+            </button>
+
+            <button
+              onClick={() => onStartPractice(rule.id)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs uppercase tracking-wider shadow-md transition cursor-pointer"
+            >
+              <PlayCircle className="w-4 h-4" />
+              <span>Practice</span>
+            </button>
+          </div>
         </div>
 
         {/* Section 1: The Rule in One Sentence */}
-        <div className="p-4 rounded-2xl bg-white/10 backdrop-blur-xs border border-white/15">
+        <div
+          data-guide-id="rule-sentence"
+          className="p-4 rounded-2xl bg-white/10 backdrop-blur-xs border border-white/15"
+        >
           <p className="text-base sm:text-lg font-medium text-slate-100 leading-snug">
             {rule.ruleSentence}
           </p>
@@ -222,7 +254,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       {/* 2 & 3: Steps Grid ("How to name it" & "How to read it") */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Section 2: How to name it */}
-        <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+        <div
+          data-guide-id="how-to-name"
+          className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4"
+        >
           <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 font-bold text-sm">
             <Sparkles className="w-4 h-4" />
             <h2 className="text-lg font-bold text-slate-900 dark:text-white">How to Name It</h2>
@@ -240,7 +275,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         </div>
 
         {/* Section 3: How to read it */}
-        <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+        <div
+          data-guide-id="how-to-read"
+          className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4"
+        >
           <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-bold text-sm">
             <CheckCircle2 className="w-4 h-4" />
             <h2 className="text-lg font-bold text-slate-900 dark:text-white">How to Read It</h2>
@@ -270,6 +308,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             return (
               <div
                 key={idx}
+                data-guide-id={`example-${idx}`}
                 className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition"
               >
                 <div className="w-full p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4 text-left">
@@ -340,7 +379,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       {/* 5. Common Mistake & Remember Callouts */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Common Mistakes */}
-        <div className="p-5 sm:p-6 rounded-2xl bg-rose-50/60 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/40 space-y-3">
+        <div
+          data-guide-id="common-mistakes"
+          className="p-5 sm:p-6 rounded-2xl bg-rose-50/60 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/40 space-y-3"
+        >
           <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 font-bold text-sm">
             <AlertTriangle className="w-5 h-5" />
             <h3 className="text-base font-bold text-rose-950 dark:text-rose-200">Common Mistakes</h3>
@@ -410,7 +452,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       </div>
 
       {/* 7. Practice Button */}
-      <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-sky-600 to-indigo-600 text-white flex flex-wrap items-center justify-between gap-4 shadow-lg">
+      <div
+        data-guide-id="start-practice"
+        className="p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-sky-600 to-indigo-600 text-white flex flex-wrap items-center justify-between gap-4 shadow-lg"
+      >
         <h3 className="text-lg font-bold">Ready to practice {rule.title}?</h3>
         <button
           onClick={() => onStartPractice(rule.id)}

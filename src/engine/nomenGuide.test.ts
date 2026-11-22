@@ -34,3 +34,12 @@ test('answerLocallyWithNomenGuide routes conceptual questions to matching topic'
   const prefixRes = answerLocallyWithNomenGuide('How do Greek prefixes work for covalent compounds?');
   assert.equal(prefixRes.libraryId, 'nonmetal-nonmetal');
 });
+
+test('answerLocallyWithNomenGuide handles greetings and follow-up mistakes/steps', () => {
+  const hi = answerLocallyWithNomenGuide('Hello Doctor Nomen!');
+  assert.match(hi.reply.toLowerCase(), /doctor nomen/);
+
+  const mistake = answerLocallyWithNomenGuide('What is a common mistake in Nonmetal + Nonmetal?');
+  assert.equal(mistake.libraryId, 'nonmetal-nonmetal');
+  assert.match(mistake.reply.toLowerCase(), /mistake|avoid/);
+});

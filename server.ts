@@ -101,6 +101,22 @@ function parseGeminiError(err: unknown): { status: number; message: string } {
   return { status: 500, message: 'Doctor Nomen could not respond right now. Please try again.' };
 }
 
+const ttsAudioCache = new Map<string, string>();
+const MAX_TTS_CACHE_ENTRIES = 50;
+let ttsCooldownUntilMs = 0;
+
+function extractRetryDelayMs(err: unknown): number {
+  const raw = err instanceof Error ? err.message : String(err);
+  const match = raw.match(/"retryDelay"\s*:\s*"(\d+)s"/i);
+  if (match) {
+    const sec = Number(match[1]);
+    if (Number.isFinite(sec) && sec > 0) {
+      return Math.min(sec * 1000, 60 * 60 * 1000);
+    }
+  }
+  return 15 * 60 * 1000;
+}
+
 async function startServer() {
   const app = express();
   const httpServer = http.createServer(app);
@@ -206,13 +222,17 @@ async function startServer() {
         followUpSuggestion: (parsed.followUpSuggestion || '').trim(),
       });
     } catch (err) {
-      console.error('Error in /api/nomen/ask:', err);
       const { status, message } = parseGeminiError(err);
+      if (status === 429) {
+        console.warn('Gemini quota reached in /api/nomen/ask; client falls back locally.');
+      } else {
+        console.error('Error in /api/nomen/ask:', err);
+      }
       res.status(status).json({ error: message });
     }
   });
 
-  // Convert Doctor Nomen's reply into spoken audio using Gemini TTS
+  // Convert Doctor Nomen's reply into spoken audio using Gemini TTS (with cache + graceful browser fallback on quota)
   app.post('/api/nomen/speak', async (req, res) => {
     try {
       const text = typeof req.body?.text === 'string' ? cleanTextForSpeech(req.body.text) : '';
@@ -221,10 +241,34 @@ async function startServer() {
         return;
       }
 
+      const clippedText = text.slice(0, 1200);
+      const ttsCacheKey = `Iapetus:${clippedText}`;
+      const cachedAudio = ttsAudioCache.get(ttsCacheKey);
+      if (cachedAudio) {
+        res.json({
+          audioBase64: cachedAudio,
+          mimeType: 'audio/wav',
+          voiceName: 'Iapetus',
+          cached: true,
+        });
+        return;
+      }
+
+      if (Date.now() < ttsCooldownUntilMs) {
+        res.json({
+          audioBase64: null,
+          fallback: 'browser',
+          quotaLimited: true,
+        });
+        return;
+      }
+
       const ai = getGeminiClient();
       if (!ai) {
-        res.status(503).json({
-          error: 'GEMINI_API_KEY is not configured.',
+        res.json({
+          audioBase64: null,
+          fallback: 'browser',
+          quotaLimited: false,
         });
         return;
       }
@@ -236,9 +280,9 @@ async function startServer() {
             role: 'user',
             parts: [
               {
-                text: text.slice(0, 1200),
+                text: clippedText,
                 speechMetadata: {
-                  style: 'Warm, clear, encouraging chemistry teacher',
+                  style: 'Warm, clear, steady chemistry teacher',
                 },
               },
             ],
@@ -248,7 +292,7 @@ async function startServer() {
           responseModalities: ['AUDIO'],
           speechConfig: {
             voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: 'Charon' },
+              prebuiltVoiceConfig: { voiceName: 'Iapetus' },
             },
           },
         },
@@ -256,18 +300,43 @@ async function startServer() {
 
       const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
       if (!base64Audio) {
-        res.status(502).json({ error: 'Could not generate speech audio.' });
+        res.json({
+          audioBase64: null,
+          fallback: 'browser',
+          quotaLimited: false,
+        });
         return;
       }
+
+      if (ttsAudioCache.size >= MAX_TTS_CACHE_ENTRIES) {
+        const oldestKey = ttsAudioCache.keys().next().value;
+        if (oldestKey) ttsAudioCache.delete(oldestKey);
+      }
+      ttsAudioCache.set(ttsCacheKey, base64Audio);
 
       res.json({
         audioBase64: base64Audio,
         mimeType: 'audio/wav',
       });
     } catch (err) {
-      console.error('Error in /api/nomen/speak:', err);
-      const { status, message } = parseGeminiError(err);
-      res.status(status).json({ error: message });
+      const { status } = parseGeminiError(err);
+      if (status === 429) {
+        ttsCooldownUntilMs = Date.now() + extractRetryDelayMs(err);
+        console.warn('Gemini TTS daily quota reached in /api/nomen/speak; using browser speech synthesis fallback.');
+        res.json({
+          audioBase64: null,
+          fallback: 'browser',
+          quotaLimited: true,
+        });
+        return;
+      }
+
+      console.warn('Gemini TTS unavailable in /api/nomen/speak; using browser fallback.');
+      res.json({
+        audioBase64: null,
+        fallback: 'browser',
+        quotaLimited: false,
+      });
     }
   });
 
@@ -387,7 +456,23 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distDir = path.resolve(__dirname, 'dist');
-    app.use(express.static(distDir));
+    app.use(
+      express.static(distDir, {
+        setHeaders: (res, filePath) => {
+          const fileName = path.basename(filePath);
+          if (
+            fileName === 'sw.js' ||
+            fileName === 'registerSW.js' ||
+            fileName === 'manifest.webmanifest' ||
+            fileName === 'index.html'
+          ) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          }
+        },
+      })
+    );
     app.get('*', (req, res, next) => {
       if (req.path.startsWith('/api/')) {
         next();
@@ -395,6 +480,7 @@ async function startServer() {
       }
       const indexFile = path.join(distDir, 'index.html');
       if (fs.existsSync(indexFile)) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.sendFile(indexFile);
       } else {
         res.status(404).send('Build output not found. Run npm run build first.');

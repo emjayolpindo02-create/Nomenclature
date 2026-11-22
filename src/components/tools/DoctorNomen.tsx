@@ -4,21 +4,29 @@ import {
   Square,
   Send,
   Volume2,
-  VolumeX,
-  RotateCcw,
   BookOpen,
   Lock,
-  Stethoscope,
   Loader2,
   MessageSquare,
+  FlaskConical,
 } from 'lucide-react';
 import { ChemicalElement, NamingResult } from '../../types/chemistry';
 import { LIBRARY_RULES } from '../../data/libraryRules';
 import { solveCompound } from '../../engine/namingEngine';
 import { answerLocallyWithNomenGuide } from '../../engine/nomenGuide';
 import { useProgress } from '../../context/ProgressContext';
+import { isOfflineFileCopy } from '../../config/appInfo';
 import { FormulaRenderer } from '../common/FormulaRenderer';
 import { ColorCodedToken, ColorLegend } from '../common/ColorCodedToken';
+import {
+  DoctorNomenAvatar,
+  NomenCharacterState,
+} from './DoctorNomenAvatar';
+import {
+  formatTextForClearSpeech,
+  resolveClearManlyPitch,
+  selectPreferredClearVoice,
+} from '../../engine/guideVoice';
 
 interface DoctorNomenProps {
   onNavigateToLibrary: (libraryId: string) => void;
@@ -68,6 +76,18 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+function pickPreferredNaturalVoice(): SpeechSynthesisVoice | null {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
+  try {
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices || voices.length === 0) return null;
+    const preferOffline = typeof navigator !== 'undefined' ? !navigator.onLine : true;
+    return selectPreferredClearVoice(voices, '', preferOffline) || null;
+  } catch {
+    return null;
+  }
+}
+
 export const DoctorNomen: React.FC<DoctorNomenProps> = ({
   onNavigateToLibrary,
   onSelectElement,
@@ -81,14 +101,17 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(true);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
-  const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
+  const [speechLevel, setSpeechLevel] = useState(0);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
-  const audioCacheRef = useRef<Record<string, string>>({});
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
+  const playbackRequestIdRef = useRef<number>(0);
+  const speechMeterTimerRef = useRef<number | null>(null);
+  const speechFallbackTimerRef = useRef<number | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -104,35 +127,155 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [messages, isAsking]);
 
-  const stopPlayback = () => {
-    if (audioPlayerRef.current) {
-      audioPlayerRef.current.pause();
-      audioPlayerRef.current.currentTime = 0;
-      audioPlayerRef.current = null;
+  const clearSpeechAnimationTimers = () => {
+    if (speechMeterTimerRef.current !== null) {
+      window.clearInterval(speechMeterTimerRef.current);
+      speechMeterTimerRef.current = null;
     }
+    if (speechFallbackTimerRef.current !== null) {
+      window.clearTimeout(speechFallbackTimerRef.current);
+      speechFallbackTimerRef.current = null;
+    }
+    setSpeechLevel(0);
+  };
+
+  const startCadenceSpeechMeter = () => {
+    clearSpeechAnimationTimers();
+    let tick = 0;
+    speechMeterTimerRef.current = window.setInterval(() => {
+      tick += 1;
+      const wave = 0.48 + 0.44 * Math.abs(Math.sin(tick * 0.72) * Math.cos(tick * 0.31));
+      setSpeechLevel(Number(wave.toFixed(2)));
+    }, 90);
+  };
+
+  const revokeActiveAudio = () => {
+    if (audioRef.current) {
+      audioRef.current.onplay = null;
+      audioRef.current.onended = null;
+      audioRef.current.onerror = null;
+      audioRef.current.pause();
+      audioRef.current.src = '';
+      audioRef.current = null;
+    }
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
+    }
+  };
+
+  const stopPlayback = () => {
+    playbackRequestIdRef.current += 1;
+    clearSpeechAnimationTimers();
+    revokeActiveAudio();
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
     setSpeakingMessageId(null);
-    setLoadingAudioId(null);
   };
 
   const speakWithBrowserFallback = (msgId: string, text: string) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      clearSpeechAnimationTimers();
       setSpeakingMessageId(null);
       return;
     }
     try {
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.98;
-      utterance.pitch = 1.0;
-      utterance.onend = () => setSpeakingMessageId(null);
-      utterance.onerror = () => setSpeakingMessageId(null);
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
+      const spokenText = formatTextForClearSpeech(text) || text;
+      const utterance = new SpeechSynthesisUtterance(spokenText);
+      const preferredVoice = pickPreferredNaturalVoice();
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+        if (preferredVoice.lang) {
+          utterance.lang = preferredVoice.lang;
+        }
+      }
+      utterance.rate = 0.85;
+      utterance.pitch = resolveClearManlyPitch(0.84, preferredVoice);
       setSpeakingMessageId(msgId);
+      startCadenceSpeechMeter();
+
+      utterance.onboundary = () => {
+        setSpeechLevel(0.95);
+      };
+      utterance.onend = () => {
+        clearSpeechAnimationTimers();
+        setSpeakingMessageId(null);
+      };
+      utterance.onerror = () => {
+        clearSpeechAnimationTimers();
+        setSpeakingMessageId(null);
+      };
+
+      // Safety cleanup if a headless/browser synthesizer never triggers onend
+      const maxDurationMs = Math.min(20000, Math.max(4000, text.length * 85));
+      speechFallbackTimerRef.current = window.setTimeout(() => {
+        if (!window.speechSynthesis.speaking) {
+          clearSpeechAnimationTimers();
+          setSpeakingMessageId(null);
+        }
+      }, maxDurationMs);
+
       window.speechSynthesis.speak(utterance);
     } catch {
+      clearSpeechAnimationTimers();
       setSpeakingMessageId(null);
+    }
+  };
+
+  const playBase64AudioWav = async (
+    reqId: number,
+    msgId: string,
+    base64Data: string,
+    mimeType: string,
+    fallbackText: string
+  ) => {
+    if (reqId !== playbackRequestIdRef.current) return;
+    try {
+      const binaryStr = window.atob(base64Data);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: mimeType || 'audio/wav' });
+      const objectUrl = URL.createObjectURL(blob);
+
+      if (reqId !== playbackRequestIdRef.current) {
+        URL.revokeObjectURL(objectUrl);
+        return;
+      }
+
+      revokeActiveAudio();
+      const audio = new Audio(objectUrl);
+      audioRef.current = audio;
+      audioUrlRef.current = objectUrl;
+
+      audio.onplay = () => {
+        if (reqId !== playbackRequestIdRef.current) return;
+        setSpeakingMessageId(msgId);
+        startCadenceSpeechMeter();
+      };
+      audio.onended = () => {
+        if (reqId !== playbackRequestIdRef.current) return;
+        clearSpeechAnimationTimers();
+        revokeActiveAudio();
+        setSpeakingMessageId(null);
+      };
+      audio.onerror = () => {
+        if (reqId !== playbackRequestIdRef.current) return;
+        revokeActiveAudio();
+        speakWithBrowserFallback(msgId, fallbackText);
+      };
+
+      await audio.play();
+    } catch {
+      if (reqId !== playbackRequestIdRef.current) return;
+      revokeActiveAudio();
+      speakWithBrowserFallback(msgId, fallbackText);
     }
   };
 
@@ -142,52 +285,49 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
       return;
     }
     stopPlayback();
+    const reqId = playbackRequestIdRef.current;
 
-    const cachedUrl = audioCacheRef.current[msgId];
-    if (cachedUrl) {
-      const audio = new Audio(cachedUrl);
-      audioPlayerRef.current = audio;
-      setSpeakingMessageId(msgId);
-      audio.onended = () => setSpeakingMessageId(null);
-      audio.onerror = () => speakWithBrowserFallback(msgId, text);
-      audio.play().catch(() => speakWithBrowserFallback(msgId, text));
-      return;
-    }
-
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    const offlineOrFileCopy =
+      isOfflineFileCopy() || (typeof navigator !== 'undefined' && navigator.onLine === false);
+    if (offlineOrFileCopy) {
       speakWithBrowserFallback(msgId, text);
       return;
     }
 
-    setLoadingAudioId(msgId);
+    const spokenText = formatTextForClearSpeech(text) || text;
+    setSpeakingMessageId(msgId);
+
     try {
       const res = await fetch('/api/nomen/speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text: spokenText }),
       });
 
+      if (reqId !== playbackRequestIdRef.current) return;
+
       if (!res.ok) {
-        throw new Error('Speech service unavailable');
+        speakWithBrowserFallback(msgId, text);
+        return;
       }
 
-      const data = (await res.json()) as { audioBase64?: string; mimeType?: string };
-      if (!data.audioBase64) {
-        throw new Error('No audio returned');
+      const data = await res.json();
+      if (reqId !== playbackRequestIdRef.current) return;
+
+      if (typeof data?.audioBase64 === 'string' && data.audioBase64.length > 0) {
+        await playBase64AudioWav(
+          reqId,
+          msgId,
+          data.audioBase64,
+          typeof data.mimeType === 'string' ? data.mimeType : 'audio/wav',
+          text
+        );
+        return;
       }
 
-      const dataUrl = `data:${data.mimeType || 'audio/wav'};base64,${data.audioBase64}`;
-      audioCacheRef.current[msgId] = dataUrl;
-
-      const audio = new Audio(dataUrl);
-      audioPlayerRef.current = audio;
-      setLoadingAudioId(null);
-      setSpeakingMessageId(msgId);
-      audio.onended = () => setSpeakingMessageId(null);
-      audio.onerror = () => speakWithBrowserFallback(msgId, text);
-      await audio.play();
+      speakWithBrowserFallback(msgId, text);
     } catch {
-      setLoadingAudioId(null);
+      if (reqId !== playbackRequestIdRef.current) return;
       speakWithBrowserFallback(msgId, text);
     }
   };
@@ -216,7 +356,7 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
       .map((m) => ({ role: m.role, text: m.text }));
 
     try {
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      if (isOfflineFileCopy() || (typeof navigator !== 'undefined' && !navigator.onLine)) {
         throw new Error('offline');
       }
 
@@ -285,7 +425,10 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
     setStatusNotice(null);
     stopPlayback();
 
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+    const offlineOrFileMode =
+      isOfflineFileCopy() || (typeof navigator !== 'undefined' && !navigator.onLine);
+
+    if (offlineOrFileMode || typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       // Fall back to Web Speech API if available
       const SpeechRec =
         (window as unknown as { SpeechRecognition?: new () => unknown; webkitSpeechRecognition?: new () => unknown })
@@ -417,55 +560,43 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
     setInput('');
   };
 
+  const latestModelMessage =
+    [...messages].reverse().find((m) => m.role === 'model') || WELCOME_MESSAGE;
+
+  const isAnyVoiceActive = speakingMessageId !== null;
+
+  const characterState: NomenCharacterState = isRecording
+    ? 'listening'
+    : isAsking || isTranscribing
+      ? 'thinking'
+      : isAnyVoiceActive
+        ? 'speaking'
+        : 'idle';
+
+  const handleSpeakOrStopLatest = () => {
+    if (isAnyVoiceActive) {
+      stopPlayback();
+      return;
+    }
+    void speakMessage(latestModelMessage.id, latestModelMessage.text);
+  };
+
   return (
     <div className="w-full max-w-3xl mx-auto space-y-5 animate-in fade-in duration-200 pb-8">
-      {/* Doctor Nomen Header */}
-      <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-r from-sky-500/10 via-indigo-500/10 to-emerald-500/10 border border-sky-500/20">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-sky-600 to-indigo-600 text-white flex items-center justify-center shadow-md shrink-0">
-              <Stethoscope className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white leading-tight">
-                Doctor Nomen
-              </h1>
-              <p className="text-sm text-slate-600 dark:text-slate-300">
-                Voice &amp; Q&amp;A guide for all 8 compound naming topics.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                if (autoSpeak) stopPlayback();
-                setAutoSpeak(!autoSpeak);
-              }}
-              aria-pressed={autoSpeak}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition cursor-pointer ${
-                autoSpeak
-                  ? 'bg-sky-600 text-white border-sky-600'
-                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-              }`}
-            >
-              {autoSpeak ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-              <span>{autoSpeak ? 'Voice On' : 'Voice Off'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleReset}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer"
-              aria-label="Reset conversation"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset</span>
-            </button>
-          </div>
-        </div>
-      </div>
+      {/* Interactive Animated Doctor Nomen Stage */}
+      <DoctorNomenAvatar
+        state={characterState}
+        speechLevel={speechLevel}
+        spokenPreview={latestModelMessage.text}
+        autoSpeak={autoSpeak}
+        isSpeaking={isAnyVoiceActive}
+        onToggleAutoSpeak={() => {
+          if (autoSpeak) stopPlayback();
+          setAutoSpeak(!autoSpeak);
+        }}
+        onReset={handleReset}
+        onSpeakOrStopLatest={handleSpeakOrStopLatest}
+      />
 
       {/* Speak or Type Input Card */}
       <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
@@ -565,7 +696,6 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
             : undefined;
           const unlocked = matchedRule ? isLibraryUnlocked(matchedRule.id) : false;
           const isSpeaking = speakingMessageId === msg.id;
-          const isLoadingAudio = loadingAudioId === msg.id;
 
           return (
             <div
@@ -575,14 +705,15 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
               {/* Top Row: Doctor Nomen label + Listen Button */}
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-xs font-bold text-sky-600 dark:text-sky-400">
-                  <Stethoscope className="w-4 h-4" />
+                  <span className="w-6 h-6 rounded-lg bg-sky-500/15 border border-sky-500/30 flex items-center justify-center">
+                    <FlaskConical className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                  </span>
                   <span>Doctor Nomen</span>
                 </div>
 
                 <button
                   type="button"
                   onClick={() => void speakMessage(msg.id, msg.text)}
-                  disabled={isLoadingAudio}
                   className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
                     isSpeaking
                       ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40'
@@ -590,12 +721,7 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
                   }`}
                   aria-label={isSpeaking ? 'Stop speaking' : 'Listen to Doctor Nomen'}
                 >
-                  {isLoadingAudio ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Loading...</span>
-                    </>
-                  ) : isSpeaking ? (
+                  {isSpeaking ? (
                     <>
                       <Square className="w-3 h-3 fill-current" />
                       <span>Stop</span>

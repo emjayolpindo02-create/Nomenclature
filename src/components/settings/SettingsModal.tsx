@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSettings } from '../../context/SettingsContext';
+import { useGuide } from '../../context/GuideContext';
 import {
   X,
   Sliders,
@@ -8,13 +9,30 @@ import {
   AlertCircle,
   AlertTriangle,
   RefreshCw,
+  Info,
+  Share2,
+  Download,
+  Crosshair,
+  Compass,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { UserSettings } from '../../types/chemistry';
+import { GuideAnimationLevel, GuideCorner, GuideSize } from '../../types/guide';
+import { isVoiceLikelyMale } from '../../engine/guideVoice';
 import {
   checkSheetsConnection,
   ConnectionCheckResult,
   formatSecretCharsLabel,
 } from '../../services/sheetsClient';
+import {
+  APP_BUILD_DATE,
+  APP_UPDATE_URL,
+  APP_VERSION,
+  checkForAppUpdate,
+  isOfflineFileCopy,
+  UpdateCheckResult,
+} from '../../config/appInfo';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -23,8 +41,35 @@ interface SettingsModalProps {
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const { settings, updateSettings, resetSettings } = useSettings();
+  const {
+    guideSettings,
+    updateGuideSettings,
+    availableVoices,
+    hasOfflineVoice,
+    speechSupported,
+    prefersReducedMotion,
+    setCalibrateModalOpen,
+    startTour,
+    speakText,
+  } = useGuide();
   const [checkingConnection, setCheckingConnection] = useState(false);
   const [connectionResult, setConnectionResult] = useState<ConnectionCheckResult | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -45,6 +90,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
       setConnectionResult(res);
     } finally {
       setCheckingConnection(false);
+    }
+  };
+
+  const handleCheckForUpdates = async () => {
+    setCheckingUpdate(true);
+    try {
+      const res = await checkForAppUpdate(APP_UPDATE_URL, APP_VERSION);
+      setUpdateResult(res);
+    } finally {
+      setCheckingUpdate(false);
     }
   };
 
@@ -335,8 +390,309 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
           </p>
         </div>
 
+        {/* 7B. Virtual Guide & Voice Settings */}
+        <div
+          data-guide-id="settings-guide"
+          className="space-y-4 pt-3 border-t border-slate-100 dark:border-slate-800"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                <Volume2 className="w-3.5 h-3.5 text-sky-500" />
+                Virtual Guide &amp; Voice
+              </span>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
+                Offline-capable animated teacher guide, live captions, and speech settings.
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  setCalibrateModalOpen(true);
+                }}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition cursor-pointer"
+              >
+                <Crosshair className="w-3.5 h-3.5" />
+                <span>Calibrate guide</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  startTour('settings');
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold transition cursor-pointer"
+              >
+                <Compass className="w-3.5 h-3.5 text-sky-500" />
+                <span>Tour</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-2.5">
+            <label className="flex items-center justify-between cursor-pointer">
+              <span className="text-sm font-semibold text-slate-900 dark:text-white">
+                Guide on/off
+              </span>
+              <input
+                type="checkbox"
+                checked={guideSettings.guideEnabled}
+                onChange={(e) => updateGuideSettings({ guideEnabled: e.target.checked })}
+                className="w-5 h-5 rounded accent-sky-600 cursor-pointer"
+              />
+            </label>
+
+            <label className="flex items-center justify-between cursor-pointer">
+              <span className="text-sm font-semibold text-slate-900 dark:text-white">
+                Voice on/off
+              </span>
+              <input
+                type="checkbox"
+                checked={guideSettings.voiceEnabled}
+                onChange={(e) => updateGuideSettings({ voiceEnabled: e.target.checked })}
+                className="w-5 h-5 rounded accent-sky-600 cursor-pointer"
+              />
+            </label>
+
+            <label className="flex items-center justify-between cursor-pointer">
+              <span className="text-sm font-semibold text-slate-900 dark:text-white">
+                Live captions
+              </span>
+              <input
+                type="checkbox"
+                checked={guideSettings.captionsEnabled}
+                onChange={(e) => updateGuideSettings({ captionsEnabled: e.target.checked })}
+                className="w-5 h-5 rounded accent-sky-600 cursor-pointer"
+              />
+            </label>
+
+            <label className="flex items-center justify-between cursor-pointer">
+              <span className="text-sm font-semibold text-slate-900 dark:text-white">
+                Welcome message on startup
+              </span>
+              <input
+                type="checkbox"
+                checked={guideSettings.welcomeOnStartup}
+                onChange={(e) => updateGuideSettings({ welcomeOnStartup: e.target.checked })}
+                className="w-5 h-5 rounded accent-sky-600 cursor-pointer"
+              />
+            </label>
+          </div>
+
+          {/* Layout Corner, Size, Animation Level */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase block">
+                Corner
+              </span>
+              <select
+                value={guideSettings.corner}
+                onChange={(e) => updateGuideSettings({ corner: e.target.value as GuideCorner })}
+                className="w-full px-2.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100"
+              >
+                <option value="bottom-right">Bottom Right</option>
+                <option value="bottom-left">Bottom Left</option>
+                <option value="top-right">Top Right</option>
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase block">
+                Card Size
+              </span>
+              <select
+                value={guideSettings.size}
+                onChange={(e) => updateGuideSettings({ size: e.target.value as GuideSize })}
+                className="w-full px-2.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100"
+              >
+                <option value="compact">Compact</option>
+                <option value="standard">Standard</option>
+                <option value="large">Large</option>
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase block">
+                Animation
+              </span>
+              <select
+                value={guideSettings.animationLevel}
+                onChange={(e) =>
+                  updateGuideSettings({ animationLevel: e.target.value as GuideAnimationLevel })
+                }
+                className="w-full px-2.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100"
+              >
+                <option value="full">Full (Lip Sync)</option>
+                <option value="simple">Simple Ring</option>
+                <option value="still">Still Photo</option>
+              </select>
+            </div>
+          </div>
+
+          {prefersReducedMotion && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/25 px-3 py-2 rounded-xl">
+              Device reduced-motion is turned on, so the guide automatically uses the simple still mode.
+            </p>
+          )}
+
+          {/* Voice Picker & Sliders */}
+          <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <label
+                htmlFor="guide-voice-select"
+                className="text-xs font-bold text-slate-700 dark:text-slate-300"
+              >
+                Speech Voice ({availableVoices.length} detected)
+              </label>
+              <button
+                type="button"
+                onClick={() => updateGuideSettings({ muted: !guideSettings.muted })}
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${
+                  guideSettings.muted
+                    ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300'
+                    : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
+                }`}
+              >
+                {guideSettings.muted ? (
+                  <>
+                    <VolumeX className="w-3 h-3" />
+                    <span>Muted</span>
+                  </>
+                ) : (
+                  <>
+                    <Volume2 className="w-3 h-3" />
+                    <span>Unmuted</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {speechSupported && availableVoices.length > 0 ? (
+              <select
+                id="guide-voice-select"
+                value={guideSettings.voiceURI}
+                onChange={(e) => updateGuideSettings({ voiceURI: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-100"
+              >
+                <option value="">Automatic Clear Manly Voice (Slow &amp; Deep)</option>
+                {availableVoices.map((v, idx) => (
+                  <option
+                    key={`${v.voiceURI}::${v.name}::${v.lang}::${idx}`}
+                    value={v.voiceURI}
+                  >
+                    {v.name} ({v.lang})
+                    {isVoiceLikelyMale(v) ? ' • Manly / Clear' : ''}
+                    {v.localService ? ' • Offline' : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                No offline speech voices were found in this browser. Live captions and visual guide sync remain active.
+              </p>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  speakText(
+                    'Hello! Fe₂S₃ is iron (III) sulfide. Check oxidation numbers and balance the charges clearly.'
+                  )
+                }
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-bold transition cursor-pointer"
+              >
+                <Volume2 className="w-3 h-3" />
+                <span>Test Voice</span>
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  updateGuideSettings({
+                    voiceURI: '',
+                    rate: 0.85,
+                    pitch: 0.84,
+                    volume: 1.0,
+                    muted: false,
+                    voiceEnabled: true,
+                  })
+                }
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-[11px] font-semibold transition cursor-pointer"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Slower Manly Default</span>
+              </button>
+            </div>
+
+            {speechSupported && availableVoices.length > 0 && !hasOfflineVoice && (
+              <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                Installed voices may require an internet connection; live captions still work anytime offline.
+              </p>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-[11px]">
+              <div>
+                <div className="flex justify-between font-semibold text-slate-600 dark:text-slate-300">
+                  <span>Speed</span>
+                  <span>{guideSettings.rate.toFixed(2)}x</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.65}
+                  max={1.3}
+                  step={0.01}
+                  value={guideSettings.rate}
+                  onChange={(e) => updateGuideSettings({ rate: Number(e.target.value) })}
+                  className="w-full accent-sky-600 cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between font-semibold text-slate-600 dark:text-slate-300">
+                  <span>Pitch (Manly)</span>
+                  <span>{guideSettings.pitch.toFixed(2)}</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.65}
+                  max={1.15}
+                  step={0.01}
+                  value={guideSettings.pitch}
+                  onChange={(e) => updateGuideSettings({ pitch: Number(e.target.value) })}
+                  className="w-full accent-sky-600 cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between font-semibold text-slate-600 dark:text-slate-300">
+                  <span>Volume</span>
+                  <span>{Math.round(guideSettings.volume * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={guideSettings.volume}
+                  onChange={(e) => updateGuideSettings({ volume: Number(e.target.value) })}
+                  className="w-full accent-sky-600 cursor-pointer"
+                />
+              </div>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            Virtual guide animated locally from the teacher&apos;s photo (not a live person). Never uploaded or downloadable.
+          </p>
+        </div>
+
         {/* 8. Google Sheets Connection Diagnostic */}
-        <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+        <div
+          data-guide-id="settings-sheets"
+          className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800"
+        >
           <div className="flex items-center justify-between gap-3">
             <div>
               <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider block">
@@ -405,6 +761,88 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
               <p className="text-[11px] leading-relaxed">{connectionResult.detail}</p>
             </div>
           )}
+        </div>
+
+        {/* 9. About this copy & Check for updates */}
+        <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                <Info className="w-3.5 h-3.5 text-sky-500" />
+                About this copy
+              </span>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-0.5">
+                Version v{APP_VERSION} • Built {APP_BUILD_DATE} •{' '}
+                {isOfflineFileCopy() ? 'Offline File Copy' : 'Hosted Web App'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleCheckForUpdates()}
+              disabled={checkingUpdate || !isOnline}
+              title={
+                isOnline
+                  ? 'Check online for a newer copy of this app'
+                  : 'Connect to the internet to check for updates'
+              }
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-xs font-bold shadow-sm transition cursor-pointer disabled:cursor-not-allowed whitespace-nowrap shrink-0"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${checkingUpdate ? 'animate-spin' : ''}`} />
+              <span>{checkingUpdate ? 'Checking...' : 'Check for updates'}</span>
+            </button>
+          </div>
+
+          {!isOnline && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-300">
+              You are offline. Connect to the internet to check for updates.
+            </p>
+          )}
+
+          {updateResult && (
+            <div
+              className={`p-3 rounded-2xl border text-xs space-y-2 ${
+                updateResult.status === 'update-available'
+                  ? 'bg-sky-500/10 border-sky-500/30 text-sky-900 dark:text-sky-200'
+                  : updateResult.status === 'up-to-date'
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200'
+                  : 'bg-slate-100 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              <p className="font-medium">{updateResult.message}</p>
+              {updateResult.downloadUrl && (
+                <a
+                  href={updateResult.downloadUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>
+                    Download {updateResult.latestVersion ? `v${updateResult.latestVersion}` : 'Latest File'}
+                  </span>
+                </a>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 10. How to share */}
+        <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+          <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+            <Share2 className="w-3.5 h-3.5 text-emerald-500" />
+            How to share
+          </span>
+          <ol className="text-xs text-slate-600 dark:text-slate-300 space-y-1.5 pl-4 list-decimal leading-relaxed">
+            <li>
+              Send the single <code className="font-mono text-[11px]">compound-naming-guide.html</code> file to a classmate (Messenger, WhatsApp, AirDrop, Bluetooth, or USB).
+            </li>
+            <li>Save the file to your phone&apos;s Downloads folder or computer.</li>
+            <li>Open the saved file with <strong>Chrome</strong> (or Safari / Files on iPhone).</li>
+            <li>
+              Optional: In Chrome, tap the menu (<strong>⋮</strong>) and choose{' '}
+              <strong>Add to Home screen</strong> for a one-tap shortcut. Each device keeps its own progress.
+            </li>
+          </ol>
         </div>
 
         {/* Reset & Done Footer */}

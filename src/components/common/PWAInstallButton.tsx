@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Download, Check, Share, X } from 'lucide-react';
+import { isOfflineFileCopy } from '../../config/appInfo';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -7,12 +8,14 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 export const PWAInstallButton: React.FC = () => {
+  const isOfflineCopy = isOfflineFileCopy();
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
   const [showIOSModal, setShowIOSModal] = useState(false);
 
   useEffect(() => {
+    if (isOfflineCopy) return;
     const isStandalone =
       window.matchMedia('(display-mode: standalone)').matches ||
       (window.navigator as unknown as { standalone?: boolean }).standalone === true;
@@ -39,7 +42,11 @@ export const PWAInstallButton: React.FC = () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
-  }, []);
+  }, [isOfflineCopy]);
+
+  if (isOfflineCopy) {
+    return null;
+  }
 
   if (isInstalled) {
     return (

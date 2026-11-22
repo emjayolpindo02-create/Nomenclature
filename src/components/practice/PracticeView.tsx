@@ -5,6 +5,7 @@ import { checkAnswerForgiving } from '../../engine/namingEngine';
 import { useProgress, Badge, SubmitPracticeInput } from '../../context/ProgressContext';
 import { useSettings } from '../../context/SettingsContext';
 import { useAuth } from '../../context/AuthContext';
+import { useGuide } from '../../context/GuideContext';
 import { formatReadableDateKey } from '../../engine/lessonLock';
 import { FormulaRenderer } from '../common/FormulaRenderer';
 import {
@@ -23,6 +24,7 @@ import {
   RefreshCw,
   CloudOff,
   AlertTriangle,
+  Compass,
 } from 'lucide-react';
 
 interface PracticeViewProps {
@@ -44,6 +46,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
     progressMap,
     queuedAttempts,
     isSyncingQueue,
+    lastSyncError,
     submitPracticeAttempt,
     syncOfflineQueueNow,
     isLibraryUnlocked,
@@ -52,6 +55,14 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
   } = useProgress();
   const { settings } = useSettings();
   const { user, sectionPolicy, openSignInModal } = useAuth();
+  const {
+    updateAppSnapshot,
+    givePracticeHint,
+    givePracticeFeedback,
+    announcePracticeOutcome,
+    announceLockedTopic,
+    startTour,
+  } = useGuide();
 
   const [activeSetId, setActiveSetId] = useState<string | null>(() =>
     initialSetId && isLibraryUnlocked(initialSetId) ? initialSetId : null
@@ -107,6 +118,29 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
       ? activeSet.questions[currentQuestionIdx]
       : null;
 
+  const currentQuestionSubmitted = currentQuestion
+    ? Boolean(submittedQuestions[currentQuestion.id])
+    : false;
+
+  useEffect(() => {
+    const inQuiz = Boolean(activeSet && currentQuestion && !quizCompleted);
+    updateAppSnapshot({
+      practiceInProgress: inQuiz,
+      activeQuestion: inQuiz ? currentQuestion ?? undefined : undefined,
+      isActiveQuestionSubmitted: inQuiz ? currentQuestionSubmitted : false,
+    });
+  }, [activeSet, currentQuestion, currentQuestionSubmitted, quizCompleted, updateAppSnapshot]);
+
+  useEffect(() => {
+    return () => {
+      updateAppSnapshot({
+        practiceInProgress: false,
+        activeQuestion: undefined,
+        isActiveQuestionSubmitted: false,
+      });
+    };
+  }, [updateAppSnapshot]);
+
   const startQuiz = (setId: string) => {
     if (!isLibraryUnlocked(setId)) return;
     onClearBlockedNotice?.();
@@ -158,7 +192,9 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
 
   const submitCurrentAnswer = () => {
     if (!currentQuestion) return;
+    const correct = isQuestionCorrect(currentQuestion);
     setSubmittedQuestions((prev) => ({ ...prev, [currentQuestion.id]: true }));
+    givePracticeFeedback(currentQuestion, correct);
   };
 
   const goToNextQuestion = async () => {
@@ -209,6 +245,12 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
         statusMessage: res.message,
       });
       setQuizCompleted(true);
+      announcePracticeOutcome({
+        passed: res.passed,
+        percent,
+        passingScore: effectivePassingScore,
+        title: activeSet.title,
+      });
     } finally {
       setSubmittingScore(false);
     }
@@ -249,17 +291,30 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
     return (
       <div className="w-full max-w-4xl mx-auto space-y-6 animate-in fade-in duration-200 pb-12">
         {/* Hub Header */}
-        <div className="p-6 rounded-3xl bg-gradient-to-br from-indigo-950 via-slate-900 to-sky-950 text-white shadow-xl space-y-2">
+        <div
+          data-guide-id="practice-header"
+          className="p-6 rounded-3xl bg-gradient-to-br from-indigo-950 via-slate-900 to-sky-950 text-white shadow-xl space-y-2"
+        >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight flex items-center gap-2.5">
               <Trophy className="w-6 h-6 text-sky-400 shrink-0" />
               <span>Practice Sets</span>
             </h1>
-            {sectionPolicy.waitingTimeHours > 0 && (
-              <span className="text-xs font-semibold text-sky-300">
-                Pass ≥{effectivePassingScore}% + Next Day ({sectionPolicy.waitingTimeHours}h min)
-              </span>
-            )}
+            <div className="flex flex-wrap items-center gap-2.5">
+              {sectionPolicy.waitingTimeHours > 0 && (
+                <span className="text-xs font-semibold text-sky-300">
+                  Pass ≥{effectivePassingScore}% + Next Day ({sectionPolicy.waitingTimeHours}h min)
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => startTour('practice')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-bold border border-white/20 transition cursor-pointer"
+              >
+                <Compass className="w-3.5 h-3.5 text-sky-300" />
+                <span>Guided Tour</span>
+              </button>
+            </div>
           </div>
           <p className="text-sm text-slate-300">
             Submit a score of <strong>{effectivePassingScore}%+</strong> to unlock the next topic tomorrow. You can practice freely anytime; sign in only when submitting a score.
@@ -287,6 +342,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
 
         {/* Student Session & Offline Queue Banner */}
         <div
+          data-guide-id="practice-signin"
           className={`px-4 py-3 rounded-2xl border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 ${
             user
               ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200'
@@ -328,14 +384,26 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isSyncingQueue ? 'animate-spin' : ''}`} />
               <span>
-                {isSyncingQueue ? 'Syncing...' : `Sync ${queuedAttempts.length} Queued`}
+                {isSyncingQueue
+                  ? 'Syncing...'
+                  : `Send pending scores (${queuedAttempts.length})`}
               </span>
             </button>
           ) : null}
         </div>
 
+        {lastSyncError && queuedAttempts.length > 0 && (
+          <div className="px-4 py-2.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
+            <span>Last send error: {lastSyncError}</span>
+          </div>
+        )}
+
         {/* Badges Earned Ribbon */}
-        <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
+        <div
+          data-guide-id="practice-badges"
+          className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2"
+        >
           <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
             <Award className="w-4 h-4 text-amber-500" />
             Badges ({badges.filter((b) => b.unlocked).length} / {badges.length})
@@ -360,7 +428,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
         </div>
 
         {/* Sequential Practice Sets */}
-        <div className="space-y-3">
+        <div data-guide-id="practice-sets" className="space-y-3">
           {PRACTICE_SETS.map((set, idx) => {
             const unlockStatus = getUnlockStatus(set.id);
             const unlocked = unlockStatus.unlocked;
@@ -462,7 +530,12 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
                       <ArrowRight className="w-3.5 h-3.5" />
                     </button>
                   ) : (
-                    <span className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => announceLockedTopic(unlockStatus)}
+                      className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition"
+                      title="Hear why this set is locked"
+                    >
                       {unlockStatus.reason === 'wait-next-day' ? (
                         <>
                           <Clock className="w-3.5 h-3.5 text-amber-500" />
@@ -484,7 +557,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
                           Locked
                         </>
                       )}
-                    </span>
+                    </button>
                   )}
                 </div>
               </div>
@@ -522,7 +595,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
                 ? `You scored ${quizResult.percent}%! This score is NOT submitted yet — sign in with your username and PIN to submit it and schedule tomorrow's unlock.`
                 : `You scored ${quizResult.percent}% (Passing: ${effectivePassingScore}%). Sign in with your username and PIN if you want to submit this attempt, or try again.`
               : quizResult.status === 'queued'
-              ? `You scored ${quizResult.percent}%. Your attempt is queued offline and will sync automatically with no duplicates when connected.`
+              ? `You scored ${quizResult.percent}%. Pending — Saved. Will send when online without duplicates.`
               : quizResult.passed
               ? activeSet.id === 'final-mixed-review'
                 ? `Outstanding work! Your score of ${quizResult.percent}% was submitted and recorded on ${quizResult.officialPassDate}. You conquered the Final Mixed Review!`
@@ -543,25 +616,39 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm transition cursor-pointer whitespace-nowrap disabled:opacity-60"
             >
               <LogIn className="w-3.5 h-3.5" />
-              <span>{submittingScore ? 'Submitting...' : 'Sign In & Submit Score'}</span>
+              <span>{submittingScore ? 'Submitting...' : 'Submit my score'}</span>
             </button>
           </div>
         )}
 
         {quizResult.status === 'queued' && (
-          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-wrap items-center justify-between gap-3 text-left">
-            <span className="text-xs text-amber-900 dark:text-amber-200 font-medium">
-              Saved in offline queue ({queuedAttempts.length} pending). Official pass date will be confirmed automatically once connected.
-            </span>
-            <button
-              type="button"
-              onClick={() => void syncOfflineQueueNow()}
-              disabled={isSyncingQueue}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition cursor-pointer whitespace-nowrap"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingQueue ? 'animate-spin' : ''}`} />
-              <span>Retry Sync</span>
-            </button>
+          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2.5 text-left">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-0.5 text-xs text-amber-900 dark:text-amber-200">
+                <span className="inline-block px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 font-bold text-[10px] uppercase tracking-wider mr-2">
+                  Pending ({queuedAttempts.length})
+                </span>
+                <span className="font-semibold">
+                  Saved. Will send when online.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => void syncOfflineQueueNow()}
+                disabled={isSyncingQueue}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition cursor-pointer whitespace-nowrap disabled:opacity-60"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingQueue ? 'animate-spin' : ''}`} />
+                <span>{isSyncingQueue ? 'Syncing...' : 'Send pending scores'}</span>
+              </button>
+            </div>
+            {(lastSyncError ||
+              (quizResult.statusMessage &&
+                quizResult.statusMessage !== 'Saved. Will send when online')) && (
+              <p className="text-[11px] text-rose-700 dark:text-rose-300 font-medium">
+                {lastSyncError || quizResult.statusMessage}
+              </p>
+            )}
           </div>
         )}
 
@@ -811,17 +898,23 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
         )}
 
         {/* Hint toggle */}
-        {settings.hintsEnabled && currentQuestion.hint && !isSubmitted && (
+        {settings.hintsEnabled && !isSubmitted && (
           <div className="pt-1">
             <button
               type="button"
-              onClick={() => setShowHint(!showHint)}
+              onClick={() => {
+                const opening = !showHint;
+                setShowHint(opening);
+                if (opening) {
+                  givePracticeHint(currentQuestion);
+                }
+              }}
               className="inline-flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 font-semibold hover:underline cursor-pointer"
             >
               <HelpCircle className="w-3.5 h-3.5" />
-              <span>{showHint ? 'Hide Hint' : 'Need a hint?'}</span>
+              <span>{showHint ? 'Hide Hint' : 'Hint'}</span>
             </button>
-            {showHint && (
+            {showHint && currentQuestion.hint && (
               <p className="mt-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 animate-in fade-in duration-150">
                 {currentQuestion.hint}
               </p>

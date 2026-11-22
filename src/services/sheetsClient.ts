@@ -176,25 +176,46 @@ async function sendRawAppsScriptPost<T extends AppsScriptBaseResponse>(
     throw new Error('offline');
   }
 
-  const response = await fetch(SHEETS_CONFIG.scriptUrl, {
-    method: 'POST',
-    // Simple text/plain Content-Type with no custom headers avoids CORS preflight
-    headers: {
-      'Content-Type': 'text/plain;charset=utf-8',
-    },
-    body: JSON.stringify({
-      ...payload,
-      appSecret: SHEETS_CONFIG.appSecret,
-    }),
-    redirect: 'follow',
-  });
+  let response: Response;
+  try {
+    response = await fetch(SHEETS_CONFIG.scriptUrl, {
+      method: 'POST',
+      // Simple text/plain Content-Type with no custom headers avoids CORS preflight
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: JSON.stringify({
+        ...payload,
+        appSecret: SHEETS_CONFIG.appSecret,
+      }),
+      redirect: 'follow',
+      credentials: 'omit',
+      mode: 'cors',
+    });
+  } catch (err) {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      throw new Error('offline');
+    }
+    const rawReason = err instanceof Error && err.message ? err.message : 'Network request blocked';
+    const isFileOrigin = typeof window !== 'undefined' && window.location?.protocol === 'file:';
+    if (isFileOrigin) {
+      throw new Error(
+        `Browser blocked request from file:// (${rawReason}). Try opening this file in Chrome or ensure script access is "Anyone".`
+      );
+    }
+    throw new Error(`Request to Apps Script failed (${rawReason}).`);
+  }
 
   if (!response.ok) {
     throw new Error(`Apps Script returned status ${response.status}`);
   }
 
   const text = await response.text();
-  return JSON.parse(text) as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error('Apps Script returned non-JSON response. Confirm deployment URL ends with /exec and access is set to "Anyone".');
+  }
 }
 
 async function postToAppsScript<T extends AppsScriptBaseResponse>(
@@ -256,7 +277,13 @@ export async function checkSheetsConnection(): Promise<ConnectionCheckResult> {
       action: 'ping',
     });
     return classifyPingResponse(sentSummary, data);
-  } catch {
+  } catch (err) {
+    const reason =
+      err instanceof Error && err.message === 'offline'
+        ? 'You are offline. Connect to the internet and try Connection check again.'
+        : err instanceof Error && err.message
+        ? err.message
+        : 'Could not reach the Apps Script /exec endpoint. Check your internet connection, the /exec URL, and that script access is set to "Anyone".';
     return {
       status: 'Cannot reach script',
       sentLength: sentSummary.length,
@@ -264,8 +291,7 @@ export async function checkSheetsConnection(): Promise<ConnectionCheckResult> {
       lastChar: sentSummary.lastChar,
       expectedLength: null,
       receivedLength: null,
-      detail:
-        'Could not reach the Apps Script /exec endpoint. Check your internet connection, the /exec URL, and that script access is set to "Anyone".',
+      detail: reason,
     };
   }
 }

@@ -95,7 +95,57 @@ export function answerLocallyWithNomenGuide(question: string): NomenOfflineRespo
     }
   }
 
-  // 2. Match against the 8 rule libraries by topic keywords
+  // 2. Match conversational greetings or identity questions
+  if (/^(hi|hello|hey|good morning|good afternoon|who are you)\b/.test(lower)) {
+    return {
+      reply:
+        "Hello! I'm Doctor Nomen, your chemistry naming lab tutor. Type or speak any compound like Fe2S3 or Ca3(PO4)2, or ask me about any naming rule!",
+      formula: '',
+      compoundName: '',
+      libraryId: 'writing-chemical-formulas',
+      followUpSuggestion: 'How do I name Pb(NO3)4?',
+    };
+  }
+
+  const wantsMistake =
+    lower.includes('mistake') || lower.includes('avoid') || lower.includes('wrong');
+  const wantsSteps =
+    lower.includes('step') || lower.includes('how to') || lower.includes('how do');
+  const wantsAnotherExample = lower.includes('another example');
+
+  const formatRuleResponse = (rule: (typeof LIBRARY_RULES)[number]): NomenOfflineResponse => {
+    const ex = wantsAnotherExample && rule.examples[1] ? rule.examples[1] : rule.examples[0];
+    const exName = ex.traditionalName
+      ? `${ex.iupacName} (${ex.traditionalName})`
+      : ex.iupacName;
+
+    let reply = `${rule.ruleSentence} For example, ${ex.formula} is named ${exName}.`;
+    if (wantsMistake && rule.commonMistakes[0]) {
+      const m = rule.commonMistakes[0];
+      reply = `Watch out for this common mistake in ${rule.title}: avoid ${m.mistake.toLowerCase()} Instead, ${m.correction}`;
+    } else if (wantsSteps && rule.howToNameSteps.length > 0) {
+      reply = `${rule.title}: ${rule.howToNameSteps.slice(0, 2).join(' ')} For example, ${ex.formula} is ${exName}.`;
+    }
+
+    return {
+      reply,
+      formula: ex.formula,
+      compoundName: ex.traditionalName ? `${ex.iupacName} / ${ex.traditionalName}` : ex.iupacName,
+      libraryId: rule.id,
+      followUpSuggestion: wantsMistake
+        ? `Show me another example under ${rule.title}.`
+        : `What is a common mistake in ${rule.title}?`,
+    };
+  };
+
+  // 3. Direct rule title match (great for follow-up chips referencing rule titles)
+  for (const rule of LIBRARY_RULES) {
+    if (lower.includes(rule.title.toLowerCase())) {
+      return formatRuleResponse(rule);
+    }
+  }
+
+  // 4. Match against the 8 rule libraries by topic keywords
   const keywordRules: { libraryId: string; keywords: string[] }[] = [
     {
       libraryId: 'writing-chemical-formulas',
@@ -138,14 +188,7 @@ export function answerLocallyWithNomenGuide(question: string): NomenOfflineRespo
       const hasPoly = ['polyatomic', 'nitrate', 'sulfate', 'phosphate', 'carbonate'].some((k) => lower.includes(k));
       if (hasVar && hasPoly) {
         const rule = LIBRARY_RULES.find((r) => r.id === entry.libraryId)!;
-        const ex = rule.examples[0];
-        return {
-          reply: `${rule.ruleSentence} For example, ${ex.formula} is ${ex.iupacName}${ex.traditionalName ? ` (${ex.traditionalName})` : ''}.`,
-          formula: ex.formula,
-          compoundName: ex.traditionalName ? `${ex.iupacName} / ${ex.traditionalName}` : ex.iupacName,
-          libraryId: rule.id,
-          followUpSuggestion: `What are the steps for ${rule.title}?`,
-        };
+        return formatRuleResponse(rule);
       }
       continue;
     }
@@ -153,19 +196,12 @@ export function answerLocallyWithNomenGuide(question: string): NomenOfflineRespo
     if (entry.keywords.some((k) => lower.includes(k))) {
       const rule = LIBRARY_RULES.find((r) => r.id === entry.libraryId);
       if (rule) {
-        const ex = rule.examples[0];
-        return {
-          reply: `${rule.ruleSentence} Example: ${ex.formula} is ${ex.iupacName}${ex.traditionalName ? ` (${ex.traditionalName})` : ''}.`,
-          formula: ex.formula,
-          compoundName: ex.traditionalName ? `${ex.iupacName} / ${ex.traditionalName}` : ex.iupacName,
-          libraryId: rule.id,
-          followUpSuggestion: `What is a common mistake in ${rule.title}?`,
-        };
+        return formatRuleResponse(rule);
       }
     }
   }
 
-  // 3. General guidance across all 8 topics
+  // 5. General guidance across all 8 topics
   return {
     reply:
       'I can help with all 8 compound naming rules: writing formulas with criss-cross, fixed and variable metals, covalent Greek prefixes, binary acids, polyatomic compounds, and ternary acids. Ask me a question or type any formula like Fe2S3 or HNO3.',

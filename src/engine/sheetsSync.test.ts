@@ -8,9 +8,15 @@ import {
   isClockMovedBackward,
   isSessionTokenValid,
   mergeProgressMaps,
+  mergeQueuedAttemptLists,
   QueuedAttempt,
   StudentSession,
 } from './sheetsSync';
+import {
+  readOfflineRecord,
+  removeOfflineRecord,
+  writeOfflineRecord,
+} from '../utils/offlineDb';
 import { getLessonUnlockStatus } from './lessonLock';
 import { PracticeProgress } from '../types/chemistry';
 import {
@@ -52,6 +58,64 @@ test('Offline queue deduplicates repeated attemptId and preserves order without 
   });
 
   assert.equal(queue.length, 1);
+});
+
+test('mergeQueuedAttemptLists reconciles localStorage and IndexedDB queues without duplicates', () => {
+  const first: QueuedAttempt = {
+    attemptId: 'att-ls-1',
+    username: 'ana.reyes',
+    queuedAt: '2026-11-15T08:00:00.000Z',
+    retryCount: 0,
+    payload: {
+      attemptId: 'att-ls-1',
+      libraryId: 'writing-chemical-formulas',
+      scorePercent: 85,
+      correctCount: 8,
+      totalQuestions: 10,
+      questionIds: ['wcf-1'],
+      missedQuestionIds: [],
+      clientSubmittedAt: '2026-11-15T08:00:00.000Z',
+    },
+  };
+  const duplicateWithDifferentTimestamp: QueuedAttempt = {
+    ...first,
+    attemptId: 'att-idb-dup',
+  };
+  const secondFromIdb: QueuedAttempt = {
+    attemptId: 'att-idb-2',
+    username: 'ana.reyes',
+    queuedAt: '2026-11-15T09:30:00.000Z',
+    retryCount: 0,
+    payload: {
+      attemptId: 'att-idb-2',
+      libraryId: 'nonmetal-nonmetal',
+      scorePercent: 90,
+      correctCount: 9,
+      totalQuestions: 10,
+      questionIds: ['nn-1'],
+      missedQuestionIds: [],
+      clientSubmittedAt: '2026-11-15T09:30:00.000Z',
+    },
+  };
+
+  const merged = mergeQueuedAttemptLists(
+    [first],
+    [duplicateWithDifferentTimestamp, secondFromIdb]
+  );
+  assert.equal(merged.length, 2);
+  assert.deepEqual(
+    merged.map((m) => m.attemptId),
+    ['att-ls-1', 'att-idb-2']
+  );
+});
+
+test('offlineDb helpers resolve safely when IndexedDB is unavailable', async () => {
+  const readRes = await readOfflineRecord('nonexistent_key');
+  const writeRes = await writeOfflineRecord('nonexistent_key', { ok: true });
+  const removeRes = await removeOfflineRecord('nonexistent_key');
+  assert.equal(readRes, null);
+  assert.equal(writeRes, false);
+  assert.equal(removeRes, undefined);
 });
 
 test('Offline queue flushes cleanly on reconnect and retains unsynced items on network failure without loss', async () => {

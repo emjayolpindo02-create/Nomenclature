@@ -23,22 +23,22 @@ export const OfflineIndicator: React.FC = () => {
     <div className="inline-flex items-center gap-1.5 text-xs">
       {isOnline ? (
         <span
-          className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium border border-emerald-500/20 whitespace-nowrap"
-          title="App is precached and runs completely offline"
-          aria-label="Offline Ready"
+          className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-semibold border border-emerald-500/25 whitespace-nowrap"
+          title="Online — ready to sync scores"
+          aria-label="Online"
         >
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
           <Wifi className="w-3.5 h-3.5 shrink-0" />
-          <span className="hidden sm:inline">Offline Ready</span>
+          <span>Online</span>
         </span>
       ) : (
         <span
-          className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-medium border border-amber-500/30 whitespace-nowrap"
-          title="Currently working completely offline from local cache"
-          aria-label="Offline Mode Active"
+          className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 font-semibold border border-amber-500/30 whitespace-nowrap"
+          title="Offline — app works locally and saves scores as pending"
+          aria-label="Offline"
         >
           <WifiOff className="w-3.5 h-3.5 shrink-0" />
-          <span className="hidden sm:inline">Offline Mode Active</span>
+          <span>Offline</span>
         </span>
       )}
     </div>

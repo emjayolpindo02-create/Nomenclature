@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { AuthProvider } from './context/AuthContext';
-import { SettingsProvider } from './context/SettingsContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { SettingsProvider, useSettings } from './context/SettingsContext';
 import { ProgressProvider, useProgress } from './context/ProgressContext';
+import { GuideProvider, useGuide } from './context/GuideContext';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { Header } from './components/common/Header';
 import { Navigation, NavTab } from './components/common/Navigation';
@@ -16,93 +17,68 @@ import { PracticeView } from './components/practice/PracticeView';
 import { ElementDetailModal } from './components/common/ElementDetailModal';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { StudentSignInModal } from './components/auth/StudentSignInModal';
+import { GuideWidget } from './components/guide/GuideWidget';
+import { CalibrateGuideModal } from './components/guide/CalibrateGuideModal';
 import { LIBRARY_RULES } from './data/libraryRules';
 import { PRACTICE_SETS } from './data/practiceQuestions';
 import { ChemicalElement } from './types/chemistry';
+import { IS_SINGLE_FILE_BUILD } from './config/appInfo';
+import {
+  buildAppRouteUrl,
+  parseAppRoute,
+  shouldUseHashRouting,
+} from './utils/routing';
 
-const VALID_TABS: NavTab[] = [
-  'libraries',
-  'wizard',
-  'crisscross',
-  'oxidation-solver',
-  'flashcards',
-  'converter',
-  'periodic-table',
-  'practice',
-];
+const VALID_RULE_IDS = LIBRARY_RULES.map((r) => r.id);
+const VALID_SET_IDS = PRACTICE_SETS.map((s) => s.id);
 
 function getBasePath(): string {
   const rawBase = import.meta.env.BASE_URL || '/';
   return rawBase.endsWith('/') ? rawBase : `${rawBase}/`;
 }
 
-function buildRouteUrl(tab: NavTab, libraryId?: string, practiceSetId?: string): string {
-  const base = getBasePath();
-  const params = new URLSearchParams();
-  params.set('tab', tab);
-  if (tab === 'libraries' && libraryId) {
-    params.set('rule', libraryId);
-  }
-  if (tab === 'practice' && practiceSetId) {
-    params.set('set', practiceSetId);
-  }
-  return `${base}?${params.toString()}`;
-}
-
-function parseLocationRoute(): {
-  tab: NavTab;
-  ruleId: string | null;
-  setId: string | null;
-} {
+function navigateBrowserUrl(url: string, useHash: boolean, replace = false): void {
+  if (typeof window === 'undefined') return;
   try {
-    const params = new URLSearchParams(window.location.search);
-    const tabParam = params.get('tab');
-    const ruleParam = params.get('rule');
-    const setParam = params.get('set');
-
-    const segments = window.location.pathname
-      .replace(new RegExp(`^${getBasePath()}`), '')
-      .split('/')
-      .filter(Boolean);
-
-    let tab: NavTab = 'libraries';
-    let ruleId: string | null = null;
-    let setId: string | null = null;
-
-    if (ruleParam && LIBRARY_RULES.some((r) => r.id === ruleParam)) {
-      tab = 'libraries';
-      ruleId = ruleParam;
-    } else if (setParam && PRACTICE_SETS.some((s) => s.id === setParam)) {
-      tab = 'practice';
-      setId = setParam;
-    } else if (tabParam) {
-      if (tabParam === 'nomen') {
-        tab = 'wizard';
-      } else if (VALID_TABS.includes(tabParam as NavTab)) {
-        tab = tabParam as NavTab;
+    if (useHash) {
+      const normalizedHash = url.startsWith('#') ? url : `#${url}`;
+      if (replace) {
+        try {
+          window.history.replaceState({}, '', normalizedHash);
+          return;
+        } catch {
+          window.location.hash = normalizedHash;
+          return;
+        }
       }
-    } else if (segments.length > 0) {
-      const head = segments[0];
-      const second = segments[1];
-      if (head === 'rule' && second && LIBRARY_RULES.some((r) => r.id === second)) {
-        tab = 'libraries';
-        ruleId = second;
-      } else if (head === 'practice' && second && PRACTICE_SETS.some((s) => s.id === second)) {
-        tab = 'practice';
-        setId = second;
-      } else if (VALID_TABS.includes(head as NavTab)) {
-        tab = head as NavTab;
+      if (window.location.hash !== normalizedHash) {
+        window.location.hash = normalizedHash;
       }
+      return;
     }
 
-    return { tab, ruleId, setId };
+    if (replace) {
+      window.history.replaceState({}, '', url);
+    } else {
+      window.history.pushState({}, '', url);
+    }
   } catch {
-    return { tab: 'libraries', ruleId: null, setId: null };
+    // Ignore restricted history mutations on sandboxed origins
   }
 }
 
 function MainContent() {
-  const { isLibraryUnlocked } = useProgress();
+  const { isLibraryUnlocked, queuedAttempts } = useProgress();
+  const { user, sectionPolicy, storageUnavailable } = useAuth();
+  const { settings } = useSettings();
+  const {
+    updateAppSnapshot,
+    onNavigateTabRef,
+    onNavigateLibraryRef,
+    guideSettings,
+    isMinimized,
+  } = useGuide();
+  const useHashRouting = shouldUseHashRouting(IS_SINGLE_FILE_BUILD);
 
   const [currentTab, setCurrentTab] = useState<NavTab>('libraries');
   const [currentLibraryId, setCurrentLibraryId] = useState<string>('writing-chemical-formulas');
@@ -110,6 +86,21 @@ function MainContent() {
   const [blockedRouteNotice, setBlockedRouteNotice] = useState<string | null>(null);
   const [selectedElement, setSelectedElement] = useState<ChemicalElement | null>(null);
   const [settingsModalOpen, setSettingsModalOpen] = useState<boolean>(false);
+  const [isOnline, setIsOnline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+
+  const buildCurrentRoute = useCallback(
+    (tab: NavTab, libraryId?: string, practiceSetId?: string) =>
+      buildAppRouteUrl({
+        useHash: useHashRouting,
+        basePath: getBasePath(),
+        tab,
+        libraryId,
+        practiceSetId,
+      }),
+    [useHashRouting]
+  );
 
   const applyGuardedRoute = useCallback(
     (pushHistory: boolean, targetTab: NavTab, targetRuleId?: string | null, targetSetId?: string | null) => {
@@ -122,14 +113,14 @@ function MainContent() {
           );
           setCurrentTab('practice');
           setPracticeInitialSetId(undefined);
-          window.history.replaceState({}, '', buildRouteUrl('practice'));
+          navigateBrowserUrl(buildCurrentRoute('practice'), useHashRouting, true);
           return;
         }
         setBlockedRouteNotice(null);
         setCurrentLibraryId(targetRuleId);
         setCurrentTab('libraries');
         if (pushHistory) {
-          window.history.pushState({}, '', buildRouteUrl('libraries', targetRuleId));
+          navigateBrowserUrl(buildCurrentRoute('libraries', targetRuleId), useHashRouting, false);
         }
         return;
       }
@@ -143,14 +134,18 @@ function MainContent() {
           );
           setCurrentTab('practice');
           setPracticeInitialSetId(undefined);
-          window.history.replaceState({}, '', buildRouteUrl('practice'));
+          navigateBrowserUrl(buildCurrentRoute('practice'), useHashRouting, true);
           return;
         }
         setBlockedRouteNotice(null);
         setPracticeInitialSetId(targetSetId);
         setCurrentTab('practice');
         if (pushHistory) {
-          window.history.pushState({}, '', buildRouteUrl('practice', undefined, targetSetId));
+          navigateBrowserUrl(
+            buildCurrentRoute('practice', undefined, targetSetId),
+            useHashRouting,
+            false
+          );
         }
         return;
       }
@@ -161,39 +156,65 @@ function MainContent() {
         setPracticeInitialSetId(undefined);
       }
       if (pushHistory) {
-        window.history.pushState(
-          {},
-          '',
-          buildRouteUrl(targetTab, targetTab === 'libraries' ? currentLibraryId : undefined)
+        navigateBrowserUrl(
+          buildCurrentRoute(targetTab, targetTab === 'libraries' ? currentLibraryId : undefined),
+          useHashRouting,
+          false
         );
       }
     },
-    [isLibraryUnlocked, currentLibraryId]
+    [isLibraryUnlocked, currentLibraryId, buildCurrentRoute, useHashRouting]
   );
 
   const applyGuardedRouteRef = useRef(applyGuardedRoute);
   applyGuardedRouteRef.current = applyGuardedRoute;
 
-  // Sync URL parameters once on mount and protect browser Back/Forward navigation
+  // Sync URL/hash route once on mount and protect browser Back/Forward/Hash navigation
   useEffect(() => {
     const syncFromUrl = () => {
-      const parsed = parseLocationRoute();
+      const parsed = parseAppRoute(
+        {
+          pathname: window.location.pathname,
+          search: window.location.search,
+          hash: window.location.hash,
+        },
+        getBasePath(),
+        VALID_RULE_IDS,
+        VALID_SET_IDS
+      );
       applyGuardedRouteRef.current(false, parsed.tab, parsed.ruleId, parsed.setId);
     };
 
     syncFromUrl();
+    if (useHashRouting && !window.location.hash) {
+      navigateBrowserUrl(
+        buildAppRouteUrl({
+          useHash: true,
+          basePath: getBasePath(),
+          tab: 'libraries',
+          libraryId: 'writing-chemical-formulas',
+        }),
+        true,
+        true
+      );
+    }
+
     window.addEventListener('popstate', syncFromUrl);
-    return () => window.removeEventListener('popstate', syncFromUrl);
-  }, []);
+    window.addEventListener('hashchange', syncFromUrl);
+    return () => {
+      window.removeEventListener('popstate', syncFromUrl);
+      window.removeEventListener('hashchange', syncFromUrl);
+    };
+  }, [useHashRouting]);
 
   // If active library or practice set becomes locked (e.g. after signing out), return to safe unlocked state
   useEffect(() => {
     if (currentTab === 'libraries' && !isLibraryUnlocked(currentLibraryId)) {
       setCurrentLibraryId('writing-chemical-formulas');
-      window.history.replaceState(
-        {},
-        '',
-        buildRouteUrl('libraries', 'writing-chemical-formulas')
+      navigateBrowserUrl(
+        buildCurrentRoute('libraries', 'writing-chemical-formulas'),
+        useHashRouting,
+        true
       );
     }
     if (
@@ -202,9 +223,9 @@ function MainContent() {
       !isLibraryUnlocked(practiceInitialSetId)
     ) {
       setPracticeInitialSetId(undefined);
-      window.history.replaceState({}, '', buildRouteUrl('practice'));
+      navigateBrowserUrl(buildCurrentRoute('practice'), useHashRouting, true);
     }
-  }, [currentTab, currentLibraryId, practiceInitialSetId, isLibraryUnlocked]);
+  }, [currentTab, currentLibraryId, practiceInitialSetId, isLibraryUnlocked, buildCurrentRoute, useHashRouting]);
 
   const handleStartPractice = (libraryId: string) => {
     if (!isLibraryUnlocked(libraryId)) {
@@ -215,7 +236,7 @@ function MainContent() {
       );
       setCurrentTab('practice');
       setPracticeInitialSetId(undefined);
-      window.history.replaceState({}, '', buildRouteUrl('practice'));
+      navigateBrowserUrl(buildCurrentRoute('practice'), useHashRouting, true);
       return;
     }
     applyGuardedRoute(true, 'practice', undefined, libraryId);
@@ -227,8 +248,66 @@ function MainContent() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  useEffect(() => {
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    onNavigateTabRef.current = (tab) => {
+      applyGuardedRouteRef.current(
+        true,
+        tab as NavTab,
+        tab === 'libraries' ? currentLibraryId : undefined
+      );
+    };
+    onNavigateLibraryRef.current = (id) => {
+      applyGuardedRouteRef.current(true, 'libraries', id);
+    };
+  }, [currentLibraryId, onNavigateTabRef, onNavigateLibraryRef]);
+
+  useEffect(() => {
+    updateAppSnapshot({
+      currentTab,
+      currentLibraryId,
+      isOnline,
+      isSignedIn: Boolean(user),
+      passingScore: sectionPolicy.passingScore || settings.passingScore || 70,
+      queuedCount: queuedAttempts.length,
+      isCurrentLibraryUnlocked: isLibraryUnlocked(currentLibraryId),
+    });
+  }, [
+    currentTab,
+    currentLibraryId,
+    isOnline,
+    user,
+    sectionPolicy.passingScore,
+    settings.passingScore,
+    queuedAttempts.length,
+    isLibraryUnlocked,
+    updateAppSnapshot,
+  ]);
+
   const activeRule =
     LIBRARY_RULES.find((r) => r.id === currentLibraryId) || LIBRARY_RULES[0];
+
+  const guideDesktopReserveClass = (() => {
+    if (!guideSettings.guideEnabled || isMinimized) return '';
+    if (guideSettings.corner === 'bottom-left') {
+      if (guideSettings.size === 'large') return 'md:pl-[420px]';
+      if (guideSettings.size === 'compact') return 'md:pl-[324px]';
+      return 'md:pl-[368px]';
+    }
+    if (guideSettings.size === 'large') return 'md:pr-[420px]';
+    if (guideSettings.size === 'compact') return 'md:pr-[324px]';
+    return 'md:pr-[368px]';
+  })();
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
@@ -238,6 +317,15 @@ function MainContent() {
           applyGuardedRoute(true, 'libraries', 'writing-chemical-formulas');
         }}
       />
+
+      {storageUnavailable && (
+        <div
+          role="status"
+          className="bg-amber-500/15 border-b border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs font-medium py-1.5 px-4 text-center"
+        >
+          Progress may not be saved in this browser
+        </div>
+      )}
 
       <Navigation
         currentTab={currentTab}
@@ -254,7 +342,9 @@ function MainContent() {
         }}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8">
+      <main
+        className={`flex-1 min-w-0 max-w-7xl w-full mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-20 md:pb-10 transition-all duration-200 ${guideDesktopReserveClass}`}
+      >
         <ErrorBoundary fallbackTitle="Could not load this section">
           {currentTab === 'libraries' && (
             <LibraryView
@@ -359,6 +449,15 @@ function MainContent() {
         isOpen={settingsModalOpen}
         onClose={() => setSettingsModalOpen(false)}
       />
+
+      {/* Virtual Guide Floating Card & Calibration Modal */}
+      <ErrorBoundary fallbackTitle="Virtual Guide paused">
+        <GuideWidget
+          onOpenSettings={() => setSettingsModalOpen(true)}
+          onNavigateToLibrary={handleNavigateToLibrary}
+        />
+      </ErrorBoundary>
+      <CalibrateGuideModal />
     </div>
   );
 }
@@ -369,7 +468,9 @@ export default function App() {
       <AuthProvider>
         <SettingsProvider>
           <ProgressProvider>
-            <MainContent />
+            <GuideProvider>
+              <MainContent />
+            </GuideProvider>
           </ProgressProvider>
         </SettingsProvider>
       </AuthProvider>

@@ -5,14 +5,16 @@ import {
   PresetProblem,
 } from '../../engine/oxidationSolver';
 import { FormulaRenderer } from '../common/FormulaRenderer';
-import { Calculator, AlertCircle, Sparkles, CheckCircle, Info } from 'lucide-react';
+import { Calculator, AlertCircle, Compass } from 'lucide-react';
 import { ChemicalElement } from '../../types/chemistry';
+import { useGuide } from '../../context/GuideContext';
 
 interface OxidationSolverToolProps {
   onSelectElement: (el: ChemicalElement) => void;
 }
 
 export const OxidationSolverTool: React.FC<OxidationSolverToolProps> = ({ onSelectElement }) => {
+  const { startTour } = useGuide();
   const [selectedId, setSelectedId] = useState<string>('h2o2');
 
   const activeProblem: PresetProblem =
@@ -24,18 +26,34 @@ export const OxidationSolverTool: React.FC<OxidationSolverToolProps> = ({ onSele
   return (
     <div className="w-full max-w-3xl mx-auto space-y-6 animate-in fade-in duration-200">
       {/* Header Banner */}
-      <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-red-500/10 border border-amber-500/20">
-        <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
-          <Calculator className="w-5 h-5 text-amber-500" />
-          <span>Oxidation Number Solver</span>
-        </h2>
-        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-          Step-by-step charge algebra for compounds, ions, and exceptions.
-        </p>
+      <div
+        data-guide-id="tool-header"
+        className="p-5 sm:p-6 rounded-2xl bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-red-500/10 border border-amber-500/20 flex flex-wrap items-center justify-between gap-4"
+      >
+        <div>
+          <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+            <Calculator className="w-5 h-5 text-amber-500" />
+            <span>Oxidation Number Solver</span>
+          </h2>
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+            Step-by-step charge algebra for compounds, ions, and exceptions.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => startTour('oxidation-solver')}
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition cursor-pointer shadow-xs shrink-0"
+        >
+          <Compass className="w-3.5 h-3.5" />
+          <span>Guided Tour</span>
+        </button>
       </div>
 
       {/* Preset Problem Picker */}
-      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+      <div
+        data-guide-id="tool-workspace"
+        className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3"
+      >
         <div className="flex items-center justify-between">
           <label
             htmlFor="preset-select"

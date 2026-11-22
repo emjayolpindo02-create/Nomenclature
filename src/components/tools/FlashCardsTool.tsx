@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Layers, RotateCw, ChevronLeft, ChevronRight, Shuffle, Check, Sparkles } from 'lucide-react';
+import { Layers, RotateCw, ChevronLeft, ChevronRight, Shuffle, Check, Compass } from 'lucide-react';
+import { useGuide } from '../../context/GuideContext';
 
 interface FlashCard {
   id: string;
@@ -47,6 +48,7 @@ const CARDS: FlashCard[] = [
 ];
 
 export const FlashCardsTool: React.FC = () => {
+  const { startTour } = useGuide();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [isFlipped, setIsFlipped] = useState<boolean>(false);
@@ -87,14 +89,27 @@ export const FlashCardsTool: React.FC = () => {
   return (
     <div className="w-full max-w-2xl mx-auto space-y-6 animate-in fade-in duration-200">
       {/* Header Banner */}
-      <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-r from-purple-500/10 via-pink-500/10 to-indigo-500/10 border border-purple-500/20">
-        <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
-          <Layers className="w-5 h-5 text-purple-500" />
-          <span>Prefix &amp; Ending Flip Cards</span>
-        </h2>
-        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-          Review Greek prefixes, Latin metal stems, and acid endings.
-        </p>
+      <div
+        data-guide-id="tool-header"
+        className="p-5 sm:p-6 rounded-2xl bg-gradient-to-r from-purple-500/10 via-pink-500/10 to-indigo-500/10 border border-purple-500/20 flex flex-wrap items-center justify-between gap-4"
+      >
+        <div>
+          <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+            <Layers className="w-5 h-5 text-purple-500" />
+            <span>Prefix &amp; Ending Flip Cards</span>
+          </h2>
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+            Review Greek prefixes, Latin metal stems, and acid endings.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => startTour('flashcards')}
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition cursor-pointer shadow-xs shrink-0"
+        >
+          <Compass className="w-3.5 h-3.5" />
+          <span>Guided Tour</span>
+        </button>
       </div>
 
       {/* Filter Tabs */}
@@ -126,7 +141,7 @@ export const FlashCardsTool: React.FC = () => {
 
       {/* Flashcard Component */}
       {activeCard && (
-        <div className="space-y-4">
+        <div data-guide-id="tool-workspace" className="space-y-4">
           <div
             onClick={() => setIsFlipped(!isFlipped)}
             className="w-full min-h-[260px] p-8 rounded-3xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-700 hover:border-purple-500 dark:hover:border-purple-500 shadow-xl cursor-pointer transition-all duration-200 flex flex-col items-center justify-center text-center relative select-none"

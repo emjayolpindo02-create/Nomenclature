@@ -13,6 +13,18 @@ import {
   logoutStudent,
   syncStudentSession,
 } from '../services/sheetsClient';
+import {
+  hasStorageFailure,
+  safeGetItem,
+  safeRemoveItem,
+  safeSetItem,
+  subscribeStorageFailure,
+} from '../utils/safeStorage';
+import {
+  readOfflineRecord,
+  removeOfflineRecord,
+  writeOfflineRecord,
+} from '../utils/offlineDb';
 
 const SESSION_STORAGE_KEY = 'ilab_student_session_v1';
 const POLICY_STORAGE_KEY = 'ilab_section_policy_v1';
@@ -44,6 +56,7 @@ interface AuthContextType {
   signInModalOpen: boolean;
   signInModalMode: 'login' | 'change-pin';
   signInModalReason: string | null;
+  storageUnavailable: boolean;
   openSignInModal: (options?: SignInModalOptions) => void;
   closeSignInModal: () => void;
   signInWithCredentials: (
@@ -57,7 +70,11 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   clearAuthError: () => void;
   applyRemoteSyncData: (payload: Omit<RemoteSyncPayload, 'syncedAtMs'>) => void;
-  refreshSessionFromServer: () => Promise<void>;
+  refreshSessionFromServer: () => Promise<{
+    ok: boolean;
+    error?: string;
+    sessionExpired?: boolean;
+  }>;
   handleExpiredSession: (message?: string) => void;
 }
 
@@ -65,11 +82,11 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 function loadStoredSession(): StudentSession | null {
   try {
-    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    const raw = safeGetItem(SESSION_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as StudentSession;
     if (!isSessionTokenValid(parsed)) {
-      localStorage.removeItem(SESSION_STORAGE_KEY);
+      safeRemoveItem(SESSION_STORAGE_KEY);
       return null;
     }
     return parsed;
@@ -80,7 +97,7 @@ function loadStoredSession(): StudentSession | null {
 
 function loadStoredPolicy(): SectionPolicySettings {
   try {
-    const raw = localStorage.getItem(POLICY_STORAGE_KEY);
+    const raw = safeGetItem(POLICY_STORAGE_KEY);
     if (!raw) return DEFAULT_SECTION_POLICY;
     return { ...DEFAULT_SECTION_POLICY, ...JSON.parse(raw) };
   } catch {
@@ -90,7 +107,7 @@ function loadStoredPolicy(): SectionPolicySettings {
 
 function loadClockHighWater(): number | null {
   try {
-    const raw = localStorage.getItem(CLOCK_HWM_STORAGE_KEY);
+    const raw = safeGetItem(CLOCK_HWM_STORAGE_KEY);
     if (!raw) return null;
     const num = Number(raw);
     return Number.isFinite(num) && num > 0 ? num : null;
@@ -114,20 +131,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [signInModalOpen, setSignInModalOpen] = useState<boolean>(false);
   const [signInModalMode, setSignInModalMode] = useState<'login' | 'change-pin'>('login');
   const [signInModalReason, setSignInModalReason] = useState<string | null>(null);
+  const [storageUnavailable, setStorageUnavailable] = useState<boolean>(() => hasStorageFailure());
   const onSuccessCallbackRef = useRef<
     ((s: StudentSession) => Promise<void> | void) | null
   >(null);
 
+  useEffect(() => {
+    setStorageUnavailable(hasStorageFailure());
+    return subscribeStorageFailure((failed) => setStorageUnavailable(failed));
+  }, []);
+
+  // Recover session/policy from IndexedDB if localStorage was cleared while offline
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      if (!session) {
+        const idbSession = await readOfflineRecord<StudentSession>(SESSION_STORAGE_KEY);
+        if (active && idbSession && isSessionTokenValid(idbSession)) {
+          setSession(idbSession);
+          safeSetItem(SESSION_STORAGE_KEY, JSON.stringify(idbSession));
+        }
+      }
+      if (!safeGetItem(POLICY_STORAGE_KEY)) {
+        const idbPolicy = await readOfflineRecord<SectionPolicySettings>(POLICY_STORAGE_KEY);
+        if (active && idbPolicy) {
+          const restored = { ...DEFAULT_SECTION_POLICY, ...idbPolicy };
+          setSectionPolicy(restored);
+          safeSetItem(POLICY_STORAGE_KEY, JSON.stringify(restored));
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const persistSession = useCallback((next: StudentSession | null) => {
     setSession(next);
-    try {
-      if (next) {
-        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(next));
-      } else {
-        localStorage.removeItem(SESSION_STORAGE_KEY);
-      }
-    } catch {
-      // ignore storage errors
+    if (next) {
+      safeSetItem(SESSION_STORAGE_KEY, JSON.stringify(next));
+      void writeOfflineRecord(SESSION_STORAGE_KEY, next);
+    } else {
+      safeRemoveItem(SESSION_STORAGE_KEY);
+      void removeOfflineRecord(SESSION_STORAGE_KEY);
     }
   }, []);
 
@@ -139,11 +185,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const safeDeviceNow =
         prev !== null && deviceNow < prev - 60_000 ? prev : deviceNow;
       const next = advanceClockHighWater(prev, safeDeviceNow, serverMs);
-      try {
-        localStorage.setItem(CLOCK_HWM_STORAGE_KEY, String(next));
-      } catch {
-        // ignore
-      }
+      safeSetItem(CLOCK_HWM_STORAGE_KEY, String(next));
       return next;
     });
   }, []);
@@ -176,11 +218,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           syncedAt: new Date().toISOString(),
         };
         setSectionPolicy(normalizedPolicy);
-        try {
-          localStorage.setItem(POLICY_STORAGE_KEY, JSON.stringify(normalizedPolicy));
-        } catch {
-          // ignore
-        }
+        safeSetItem(POLICY_STORAGE_KEY, JSON.stringify(normalizedPolicy));
+        void writeOfflineRecord(POLICY_STORAGE_KEY, normalizedPolicy);
       }
 
       setRemoteSync({
@@ -199,13 +238,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [persistSession]
   );
 
-  const refreshSessionFromServer = useCallback(async () => {
-    if (!session || (typeof navigator !== 'undefined' && !navigator.onLine)) {
-      return;
+  const refreshSessionFromServer = useCallback(async (): Promise<{
+    ok: boolean;
+    error?: string;
+    sessionExpired?: boolean;
+  }> => {
+    if (!session) {
+      return { ok: false, error: 'Sign in first to sync with Google Sheets.' };
+    }
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return { ok: false, error: 'offline' };
     }
     if (!isSessionTokenValid(session)) {
       handleExpiredSession();
-      return;
+      return {
+        ok: false,
+        sessionExpired: true,
+        error: 'Your sign-in session expired. Please sign in with your PIN again.',
+      };
     }
 
     try {
@@ -214,7 +264,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (res.sessionExpired) {
           handleExpiredSession(res.error);
         }
-        return;
+        return {
+          ok: false,
+          sessionExpired: res.sessionExpired,
+          error: res.error || 'Could not sync session with Google Sheets.',
+        };
       }
 
       if (res.user) {
@@ -231,8 +285,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         settings: res.settings,
         serverNowIso: res.serverNowIso,
       });
-    } catch {
+      return { ok: true };
+    } catch (err) {
       // Stay offline-safe when network or Apps Script cannot be reached
+      return {
+        ok: false,
+        error: err instanceof Error && err.message ? err.message : 'Could not reach Google Sheets.',
+      };
     }
   }, [session, persistSession, applyRemoteSyncData, handleExpiredSession]);
 
@@ -315,6 +374,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const msg =
           err instanceof Error && err.message === 'offline'
             ? 'You are offline. Reconnect to sign in with your username and PIN.'
+            : err instanceof Error && err.message
+            ? err.message
             : 'Could not reach the Google Sheet service. Please check your connection.';
         setAuthError(msg);
         return { ok: false, error: msg };
@@ -397,6 +458,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signInModalOpen,
         signInModalMode,
         signInModalReason,
+        storageUnavailable,
         openSignInModal,
         closeSignInModal,
         signInWithCredentials,
