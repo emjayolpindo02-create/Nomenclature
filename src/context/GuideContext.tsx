@@ -32,7 +32,7 @@ import {
   GuideBrainReply,
 } from '../engine/guideBrain';
 import { getTourSteps } from '../data/guideKnowledge';
-import { TopicAccessStatus } from '../engine/topicAccess';
+import { LessonUnlockStatus } from '../engine/lessonLock';
 import { safeGetItem, safeSetItem } from '../utils/safeStorage';
 import { useSettings } from './SettingsContext';
 
@@ -144,7 +144,7 @@ interface GuideContextType {
     passingScore: number;
     title: string;
   }) => void;
-  announceLockedTopic: (unlockStatus: TopicAccessStatus) => void;
+  announceLockedTopic: (unlockStatus: LessonUnlockStatus) => void;
   activeTour: ActiveTourState | null;
   activeHighlightId: string | null;
   startTour: (tourId: TourId) => void;
@@ -191,7 +191,7 @@ export const GuideProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [prefersReducedMotion, setPrefersReducedMotion] = useState<boolean>(false);
   const [canvasSupported, setCanvasSupported] = useState<boolean>(true);
   const [activeTour, setActiveTour] = useState<ActiveTourState | null>(null);
-  const [isMinimized, setIsMinimized] = useState<boolean>(true);
+  const [isMinimized, setIsMinimized] = useState<boolean>(false);
   const [isMobileExpanded, setIsMobileExpanded] = useState<boolean>(false);
   const [calibrateModalOpen, setCalibrateModalOpen] = useState<boolean>(false);
   const [isListeningMic, setIsListeningMic] = useState<boolean>(false);
@@ -559,17 +559,13 @@ export const GuideProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   );
 
   const announceLockedTopic = useCallback(
-    (unlockStatus: TopicAccessStatus) => {
+    (unlockStatus: LessonUnlockStatus) => {
       const text =
-        unlockStatus.reason === 'teacher-locked' || unlockStatus.reason === 'outside-schedule'
-          ? unlockStatus.lockLabel || 'This topic is currently locked by your teacher.'
-          : unlockStatus.reason === 'approval-required'
-            ? 'Your account is waiting for teacher approval. You can still review the library and try Topic 1.'
-            : unlockStatus.reason === 'wait-next-day'
-              ? `Great job passing ${unlockStatus.previousTopicTitle || 'the previous topic'}! ${unlockStatus.countdownLabel || 'Come back tomorrow to open this topic.'}`
-              : unlockStatus.reason === 'awaiting-sync'
-                ? 'Your passing score is saved offline. Reconnect so the official unlock time can be recorded.'
-                : `This topic is locked for now. Pass ${unlockStatus.previousTopicTitle || 'the previous topic'} with at least ${unlockStatus.requiredScore}% to continue.`;
+        unlockStatus.reason === 'wait-next-day'
+          ? `Great job passing ${unlockStatus.previousTitle || 'the previous set'}! ${unlockStatus.countdownLabel || 'Come back tomorrow to open this lesson.'}`
+          : unlockStatus.reason === 'awaiting-sync'
+            ? 'Your passing score is saved offline as Pending. Connect to the internet so your official unlock date can be recorded.'
+            : `This lesson is locked for now. Pass ${unlockStatus.previousTitle || 'the previous set'} with at least ${unlockStatus.requiredScore}% and come back tomorrow.`;
       replyAsMessage(null, { text });
     },
     [replyAsMessage]

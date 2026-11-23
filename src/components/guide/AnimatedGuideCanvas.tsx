@@ -161,12 +161,12 @@ export const AnimatedGuideCanvas: React.FC<AnimatedGuideCanvasProps> = ({
 
   const ringClass =
     visualState === 'talking'
-      ? 'ring-3 ring-sky-500 shadow-[0_0_20px_rgba(14,165,233,0.35)]'
+      ? 'ring-3 ring-sky-400 shadow-[0_0_20px_rgba(56,189,248,0.4)]'
       : visualState === 'listening'
-        ? 'ring-3 ring-emerald-500 shadow-[0_0_18px_rgba(16,185,129,0.35)]'
+        ? 'ring-3 ring-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.4)]'
         : visualState === 'thinking'
-          ? 'ring-3 ring-amber-400 shadow-[0_0_16px_rgba(245,158,11,0.3)]'
-          : 'ring-2 ring-sky-300';
+          ? 'ring-3 ring-amber-400 shadow-[0_0_16px_rgba(251,191,36,0.35)]'
+          : 'ring-2 ring-slate-600/70';
 
   const simpleMotionClass =
     effectiveAnimationMode === 'simple'
@@ -183,7 +183,7 @@ export const AnimatedGuideCanvas: React.FC<AnimatedGuideCanvasProps> = ({
       data-state={visualState}
       data-mode={canvasFailed ? 'still' : effectiveAnimationMode}
       onContextMenu={(e) => e.preventDefault()}
-      className={`relative rounded-full overflow-hidden bg-gradient-to-b from-[#e0f2fe] to-[#f4f9fc] select-none shrink-0 ${ringClass} ${simpleMotionClass}`}
+      className={`relative rounded-full overflow-hidden bg-gradient-to-b from-slate-800 to-slate-900 select-none shrink-0 ${ringClass} ${simpleMotionClass}`}
       style={{ width: `${dimension}px`, height: `${dimension}px` }}
       aria-label="Virtual Guide animated teacher avatar"
     >

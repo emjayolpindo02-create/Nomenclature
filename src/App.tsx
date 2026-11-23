@@ -6,7 +6,6 @@ import { GuideProvider, useGuide } from './context/GuideContext';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { Header } from './components/common/Header';
 import { Navigation, NavTab } from './components/common/Navigation';
-import { StartScreen } from './components/start/StartScreen';
 import { LibraryView } from './components/libraries/LibraryView';
 import { DoctorNomen } from './components/tools/DoctorNomen';
 import { CrissCrossBuilder } from './components/tools/CrissCrossBuilder';
@@ -15,21 +14,14 @@ import { FlashCardsTool } from './components/tools/FlashCardsTool';
 import { ConverterTool } from './components/tools/ConverterTool';
 import { PeriodicTable } from './components/periodic/PeriodicTable';
 import { PracticeView } from './components/practice/PracticeView';
-import { TeacherDashboard } from './components/teacher/TeacherDashboard';
 import { ElementDetailModal } from './components/common/ElementDetailModal';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { StudentSignInModal } from './components/auth/StudentSignInModal';
 import { GuideWidget } from './components/guide/GuideWidget';
 import { CalibrateGuideModal } from './components/guide/CalibrateGuideModal';
-import { ChemistryBackdrop } from './components/common/ChemistryBackdrop';
 import { LIBRARY_RULES } from './data/libraryRules';
-import {
-  TOPICS,
-  VALID_TOPIC_IDS,
-  getTopicById,
-  getTopicForLibraryRule,
-} from './data/topics';
-import { ChemicalElement, TopicId } from './types/chemistry';
+import { PRACTICE_SETS } from './data/practiceQuestions';
+import { ChemicalElement } from './types/chemistry';
 import { IS_SINGLE_FILE_BUILD } from './config/appInfo';
 import {
   buildAppRouteUrl,
@@ -38,26 +30,11 @@ import {
 } from './utils/routing';
 
 const VALID_RULE_IDS = LIBRARY_RULES.map((r) => r.id);
-const VALID_SET_IDS = Array.from(new Set([...VALID_TOPIC_IDS, ...VALID_RULE_IDS]));
+const VALID_SET_IDS = PRACTICE_SETS.map((s) => s.id);
 
 function getBasePath(): string {
   const rawBase = import.meta.env.BASE_URL || '/';
   return rawBase.endsWith('/') ? rawBase : `${rawBase}/`;
-}
-
-function hasExplicitDeepLink(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    const hash = (window.location.hash || '').replace(/^#\/?/, '').trim();
-    if (hash.length > 0) return true;
-    const params = new URLSearchParams(window.location.search);
-    if (params.has('tab') || params.has('rule') || params.has('set')) return true;
-    const base = getBasePath().replace(/\/+$/, '');
-    const path = window.location.pathname.replace(/\/+$/, '');
-    return path.length > base.length;
-  } catch {
-    return false;
-  }
 }
 
 function navigateBrowserUrl(url: string, useHash: boolean, replace = false): void {
@@ -90,19 +67,9 @@ function navigateBrowserUrl(url: string, useHash: boolean, replace = false): voi
   }
 }
 
-function resolveTopicId(rawSetOrRuleId: string | null | undefined): TopicId | null {
-  if (!rawSetOrRuleId) return null;
-  const direct = getTopicById(rawSetOrRuleId);
-  if (direct) return direct.id;
-  if (VALID_RULE_IDS.includes(rawSetOrRuleId)) {
-    return getTopicForLibraryRule(rawSetOrRuleId);
-  }
-  return null;
-}
-
 function MainContent() {
-  const { getTopicAccess, isTopicUnlocked, queuedCompletions } = useProgress();
-  const { firebaseUser, isTeacher, storageUnavailable, openSignInModal } = useAuth();
+  const { isLibraryUnlocked, queuedAttempts } = useProgress();
+  const { user, sectionPolicy, storageUnavailable } = useAuth();
   const { settings } = useSettings();
   const {
     updateAppSnapshot,
@@ -113,8 +80,7 @@ function MainContent() {
   } = useGuide();
   const useHashRouting = shouldUseHashRouting(IS_SINGLE_FILE_BUILD);
 
-  const [showStartScreen, setShowStartScreen] = useState<boolean>(() => !hasExplicitDeepLink());
-  const [currentTab, setCurrentTab] = useState<NavTab>('practice');
+  const [currentTab, setCurrentTab] = useState<NavTab>('libraries');
   const [currentLibraryId, setCurrentLibraryId] = useState<string>('writing-chemical-formulas');
   const [practiceInitialSetId, setPracticeInitialSetId] = useState<string | undefined>(undefined);
   const [blockedRouteNotice, setBlockedRouteNotice] = useState<string | null>(null);
@@ -138,29 +104,12 @@ function MainContent() {
 
   const applyGuardedRoute = useCallback(
     (pushHistory: boolean, targetTab: NavTab, targetRuleId?: string | null, targetSetId?: string | null) => {
-      // Built-in Compound Library is ALWAYS unlocked with no login, sync, or internet
-      if (targetTab === 'libraries') {
-        const safeRuleId =
-          targetRuleId && VALID_RULE_IDS.includes(targetRuleId)
-            ? targetRuleId
-            : currentLibraryId;
-        setBlockedRouteNotice(null);
-        setCurrentLibraryId(safeRuleId);
-        setCurrentTab('libraries');
-        if (pushHistory) {
-          navigateBrowserUrl(buildCurrentRoute('libraries', safeRuleId), useHashRouting, false);
-        }
-        return;
-      }
-
-      if (targetTab === 'practice' && targetSetId) {
-        const resolvedTopicId = resolveTopicId(targetSetId);
-        if (resolvedTopicId && !isTopicUnlocked(resolvedTopicId)) {
-          const access = getTopicAccess(resolvedTopicId);
+      if (targetTab === 'libraries' && targetRuleId) {
+        if (!isLibraryUnlocked(targetRuleId)) {
           const lockedTitle =
-            TOPICS.find((t) => t.id === resolvedTopicId)?.title || 'This topic';
+            LIBRARY_RULES.find((r) => r.id === targetRuleId)?.title || 'this topic';
           setBlockedRouteNotice(
-            `${lockedTitle} is locked. ${access.lockLabel || 'Check the unlock requirements below.'}`
+            `${lockedTitle} is locked. Submit a passing score on the previous practice and wait until tomorrow to open it.`
           );
           setCurrentTab('practice');
           setPracticeInitialSetId(undefined);
@@ -168,11 +117,32 @@ function MainContent() {
           return;
         }
         setBlockedRouteNotice(null);
-        setPracticeInitialSetId(resolvedTopicId || undefined);
+        setCurrentLibraryId(targetRuleId);
+        setCurrentTab('libraries');
+        if (pushHistory) {
+          navigateBrowserUrl(buildCurrentRoute('libraries', targetRuleId), useHashRouting, false);
+        }
+        return;
+      }
+
+      if (targetTab === 'practice' && targetSetId) {
+        if (!isLibraryUnlocked(targetSetId)) {
+          const lockedTitle =
+            PRACTICE_SETS.find((s) => s.id === targetSetId)?.title || 'this practice set';
+          setBlockedRouteNotice(
+            `${lockedTitle} is locked. Submit a passing score on the previous practice and wait until tomorrow to open it.`
+          );
+          setCurrentTab('practice');
+          setPracticeInitialSetId(undefined);
+          navigateBrowserUrl(buildCurrentRoute('practice'), useHashRouting, true);
+          return;
+        }
+        setBlockedRouteNotice(null);
+        setPracticeInitialSetId(targetSetId);
         setCurrentTab('practice');
         if (pushHistory) {
           navigateBrowserUrl(
-            buildCurrentRoute('practice', undefined, resolvedTopicId || undefined),
+            buildCurrentRoute('practice', undefined, targetSetId),
             useHashRouting,
             false
           );
@@ -187,24 +157,21 @@ function MainContent() {
       }
       if (pushHistory) {
         navigateBrowserUrl(
-          buildCurrentRoute(targetTab),
+          buildCurrentRoute(targetTab, targetTab === 'libraries' ? currentLibraryId : undefined),
           useHashRouting,
           false
         );
       }
     },
-    [isTopicUnlocked, getTopicAccess, currentLibraryId, buildCurrentRoute, useHashRouting]
+    [isLibraryUnlocked, currentLibraryId, buildCurrentRoute, useHashRouting]
   );
 
   const applyGuardedRouteRef = useRef(applyGuardedRoute);
   applyGuardedRouteRef.current = applyGuardedRoute;
 
-  // Sync URL/hash route on mount and protect browser Back/Forward/Hash navigation
+  // Sync URL/hash route once on mount and protect browser Back/Forward/Hash navigation
   useEffect(() => {
     const syncFromUrl = () => {
-      const explicit = hasExplicitDeepLink();
-      if (!explicit) return;
-      setShowStartScreen(false);
       const parsed = parseAppRoute(
         {
           pathname: window.location.pathname,
@@ -219,6 +186,18 @@ function MainContent() {
     };
 
     syncFromUrl();
+    if (useHashRouting && !window.location.hash) {
+      navigateBrowserUrl(
+        buildAppRouteUrl({
+          useHash: true,
+          basePath: getBasePath(),
+          tab: 'libraries',
+          libraryId: 'writing-chemical-formulas',
+        }),
+        true,
+        true
+      );
+    }
 
     window.addEventListener('popstate', syncFromUrl);
     window.addEventListener('hashchange', syncFromUrl);
@@ -228,55 +207,45 @@ function MainContent() {
     };
   }, [useHashRouting]);
 
-  // If active topic becomes locked (e.g. teacher locked it live or user signed out), return safely to Topics list
+  // If active library or practice set becomes locked (e.g. after signing out), return to safe unlocked state
   useEffect(() => {
-    if (currentTab === 'practice' && practiceInitialSetId) {
-      const resolved = resolveTopicId(practiceInitialSetId);
-      if (resolved && !isTopicUnlocked(resolved)) {
-        setPracticeInitialSetId(undefined);
-        navigateBrowserUrl(buildCurrentRoute('practice'), useHashRouting, true);
-      }
+    if (currentTab === 'libraries' && !isLibraryUnlocked(currentLibraryId)) {
+      setCurrentLibraryId('writing-chemical-formulas');
+      navigateBrowserUrl(
+        buildCurrentRoute('libraries', 'writing-chemical-formulas'),
+        useHashRouting,
+        true
+      );
     }
-  }, [currentTab, practiceInitialSetId, isTopicUnlocked, buildCurrentRoute, useHashRouting]);
+    if (
+      currentTab === 'practice' &&
+      practiceInitialSetId &&
+      !isLibraryUnlocked(practiceInitialSetId)
+    ) {
+      setPracticeInitialSetId(undefined);
+      navigateBrowserUrl(buildCurrentRoute('practice'), useHashRouting, true);
+    }
+  }, [currentTab, currentLibraryId, practiceInitialSetId, isLibraryUnlocked, buildCurrentRoute, useHashRouting]);
 
-  const handleStartPractice = (topicOrLibraryId: string) => {
-    const resolvedTopicId = resolveTopicId(topicOrLibraryId) || 'ionic-compounds';
-    setShowStartScreen(false);
-    if (!isTopicUnlocked(resolvedTopicId)) {
-      const access = getTopicAccess(resolvedTopicId);
-      const title = getTopicById(resolvedTopicId)?.title || 'That topic';
+  const handleStartPractice = (libraryId: string) => {
+    if (!isLibraryUnlocked(libraryId)) {
+      const title =
+        PRACTICE_SETS.find((s) => s.id === libraryId)?.title || 'That practice set';
       setBlockedRouteNotice(
-        `${title} is locked. ${access.lockLabel || 'Check unlock requirements below.'}`
+        `${title} is locked. Submit a passing score on the previous practice and wait until tomorrow to open it.`
       );
       setCurrentTab('practice');
       setPracticeInitialSetId(undefined);
       navigateBrowserUrl(buildCurrentRoute('practice'), useHashRouting, true);
       return;
     }
-    applyGuardedRoute(true, 'practice', undefined, resolvedTopicId);
+    applyGuardedRoute(true, 'practice', undefined, libraryId);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleNavigateToLibrary = (libraryId: string) => {
-    setShowStartScreen(false);
     applyGuardedRoute(true, 'libraries', libraryId);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleOpenTeacher = () => {
-    if (isTeacher) {
-      setShowStartScreen(false);
-      applyGuardedRoute(true, 'teacher');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-    openSignInModal({
-      mode: 'teacher',
-      onSuccess: () => {
-        setShowStartScreen(false);
-        applyGuardedRoute(true, 'teacher');
-      },
-    });
   };
 
   useEffect(() => {
@@ -292,7 +261,6 @@ function MainContent() {
 
   useEffect(() => {
     onNavigateTabRef.current = (tab) => {
-      setShowStartScreen(false);
       applyGuardedRouteRef.current(
         true,
         tab as NavTab,
@@ -300,7 +268,6 @@ function MainContent() {
       );
     };
     onNavigateLibraryRef.current = (id) => {
-      setShowStartScreen(false);
       applyGuardedRouteRef.current(true, 'libraries', id);
     };
   }, [currentLibraryId, onNavigateTabRef, onNavigateLibraryRef]);
@@ -310,223 +277,187 @@ function MainContent() {
       currentTab,
       currentLibraryId,
       isOnline,
-      isSignedIn: Boolean(firebaseUser),
-      passingScore: settings.passingScore || 75,
-      queuedCount: queuedCompletions.length,
-      isCurrentLibraryUnlocked: true,
+      isSignedIn: Boolean(user),
+      passingScore: sectionPolicy.passingScore || settings.passingScore || 70,
+      queuedCount: queuedAttempts.length,
+      isCurrentLibraryUnlocked: isLibraryUnlocked(currentLibraryId),
     });
   }, [
     currentTab,
     currentLibraryId,
     isOnline,
-    firebaseUser,
+    user,
+    sectionPolicy.passingScore,
     settings.passingScore,
-    queuedCompletions.length,
+    queuedAttempts.length,
+    isLibraryUnlocked,
     updateAppSnapshot,
   ]);
 
   const activeRule =
     LIBRARY_RULES.find((r) => r.id === currentLibraryId) || LIBRARY_RULES[0];
 
+  const guideDesktopReserveClass = (() => {
+    if (!guideSettings.guideEnabled || isMinimized) return '';
+    if (guideSettings.corner === 'bottom-left') {
+      if (guideSettings.size === 'large') return 'md:pl-[420px]';
+      if (guideSettings.size === 'compact') return 'md:pl-[324px]';
+      return 'md:pl-[368px]';
+    }
+    if (guideSettings.size === 'large') return 'md:pr-[420px]';
+    if (guideSettings.size === 'compact') return 'md:pr-[324px]';
+    return 'md:pr-[368px]';
+  })();
+
   return (
-    <div className="relative min-h-screen flex flex-col bg-[#fbfdff] text-[#1f3a56]">
-      <ChemistryBackdrop />
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
+      <Header
+        onOpenSettings={() => setSettingsModalOpen(true)}
+        onNavigateHome={() => {
+          applyGuardedRoute(true, 'libraries', 'writing-chemical-formulas');
+        }}
+      />
 
-      <div className="relative z-10 min-h-screen flex flex-col">
-        {showStartScreen ? (
-          <StartScreen
-            onStartTopics={() => {
-              setShowStartScreen(false);
-              applyGuardedRoute(true, 'practice');
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-            onOpenLibrary={() => {
-              setShowStartScreen(false);
-              applyGuardedRoute(true, 'libraries', currentLibraryId);
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-            onOpenSettings={() => setSettingsModalOpen(true)}
-            onOpenTeacher={handleOpenTeacher}
-          />
-        ) : (
-          <>
-            <Header
-              onOpenSettings={() => setSettingsModalOpen(true)}
-              onNavigateHome={() => {
-                setShowStartScreen(true);
-                navigateBrowserUrl(
-                  useHashRouting ? '#/' : getBasePath(),
-                  useHashRouting,
-                  false
-                );
-              }}
-              onNavigateTeacher={handleOpenTeacher}
-            />
+      {storageUnavailable && (
+        <div
+          role="status"
+          className="bg-amber-500/15 border-b border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs font-medium py-1.5 px-4 text-center"
+        >
+          Progress may not be saved in this browser.
+        </div>
+      )}
 
-            {storageUnavailable && (
-              <div
-                role="status"
-                className="bg-amber-100 border-b border-amber-300 text-amber-900 text-xs font-medium py-1.5 px-4 text-center"
-              >
-                Progress may not be saved in this browser.
-              </div>
-            )}
+      <Navigation
+        currentTab={currentTab}
+        currentLibraryId={currentLibraryId}
+        onSelectTab={(tab) => {
+          if (tab === 'practice') {
+            setPracticeInitialSetId(undefined);
+          }
+          applyGuardedRoute(true, tab, tab === 'libraries' ? currentLibraryId : undefined);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        onSelectLibrary={(id) => {
+          handleNavigateToLibrary(id);
+        }}
+      />
 
-            <Navigation
-              currentTab={currentTab}
-              currentLibraryId={currentLibraryId}
-              onSelectTab={(tab) => {
-                if (tab === 'practice') {
-                  setPracticeInitialSetId(undefined);
-                }
-                applyGuardedRoute(
-                  true,
-                  tab,
-                  tab === 'libraries' ? currentLibraryId : undefined
-                );
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
-              onSelectLibrary={(id) => {
-                handleNavigateToLibrary(id);
-              }}
-            />
-
-            <main
-              className="flex-1 min-w-0 max-w-7xl w-full mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-24 transition-all duration-200"
-            >
-              <ErrorBoundary fallbackTitle="Could not load this section">
-                {currentTab === 'libraries' && (
-                  <LibraryView
-                    rule={activeRule}
-                    onStartPractice={handleStartPractice}
-                    onSelectElement={(el) => setSelectedElement(el)}
-                    onNavigateToLibrary={handleNavigateToLibrary}
-                  />
-                )}
-
-                {currentTab === 'wizard' && (
-                  <DoctorNomen
-                    onNavigateToLibrary={handleNavigateToLibrary}
-                    onSelectElement={(el) => setSelectedElement(el)}
-                  />
-                )}
-
-                {currentTab === 'crisscross' && (
-                  <CrissCrossBuilder onSelectElement={(el) => setSelectedElement(el)} />
-                )}
-
-                {currentTab === 'oxidation-solver' && (
-                  <OxidationSolverTool onSelectElement={(el) => setSelectedElement(el)} />
-                )}
-
-                {currentTab === 'flashcards' && <FlashCardsTool />}
-
-                {currentTab === 'converter' && (
-                  <ConverterTool
-                    onSelectElement={(el) => setSelectedElement(el)}
-                    onNavigateToLibrary={handleNavigateToLibrary}
-                  />
-                )}
-
-                {currentTab === 'periodic-table' && (
-                  <PeriodicTable onSelectElement={(el) => setSelectedElement(el)} />
-                )}
-
-                {currentTab === 'practice' && (
-                  <PracticeView
-                    initialSetId={practiceInitialSetId}
-                    blockedNotice={blockedRouteNotice}
-                    onClearBlockedNotice={() => setBlockedRouteNotice(null)}
-                    onSelectElement={(el) => setSelectedElement(el)}
-                    onNavigateToLibrary={handleNavigateToLibrary}
-                  />
-                )}
-
-                {currentTab === 'teacher' && <TeacherDashboard />}
-              </ErrorBoundary>
-            </main>
-
-            {/* Clean White Footer without author, school, email, or course code */}
-            <footer className="w-full border-t border-[#dbe9f4] bg-[#ffffff]/95 backdrop-blur-sm py-6 text-xs text-[#435e7a]">
-              <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-2">
-                  <span className="font-display font-bold text-[#1f3a56]">I-LAB</span>
-                </div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPracticeInitialSetId(undefined);
-                      applyGuardedRoute(true, 'practice');
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    className="hover:text-[#0284c7] font-semibold transition cursor-pointer whitespace-nowrap"
-                  >
-                    Topics
-                  </button>
-                  <span>•</span>
-                  <button
-                    type="button"
-                    onClick={() => setSettingsModalOpen(true)}
-                    className="hover:text-[#0284c7] font-semibold transition cursor-pointer whitespace-nowrap"
-                  >
-                    Settings &amp; Themes
-                  </button>
-                  <span>•</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      applyGuardedRoute(true, 'periodic-table');
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    className="hover:text-[#0284c7] font-semibold transition cursor-pointer whitespace-nowrap"
-                  >
-                    Periodic Table (118)
-                  </button>
-                  <span>•</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      applyGuardedRoute(true, 'wizard');
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    className="hover:text-[#0284c7] font-semibold transition cursor-pointer whitespace-nowrap"
-                  >
-                    Doctor Nomen
-                  </button>
-                </div>
-              </div>
-            </footer>
-          </>
-        )}
-
-        {/* Student / Teacher Google & Guest Modal */}
-        <StudentSignInModal />
-
-        {/* Element Detail Modal */}
-        <ElementDetailModal
-          element={selectedElement}
-          onClose={() => setSelectedElement(null)}
-        />
-
-        {/* Settings Modal */}
-        <SettingsModal
-          isOpen={settingsModalOpen}
-          onClose={() => setSettingsModalOpen(false)}
-          onOpenTeacherPortal={handleOpenTeacher}
-        />
-
-        {/* Virtual Guide Floating Card & Calibration Modal (hidden on StartScreen so StartScreen stays clean) */}
-        {!showStartScreen && (
-          <ErrorBoundary fallbackTitle="Virtual Guide paused">
-            <GuideWidget
-              onOpenSettings={() => setSettingsModalOpen(true)}
+      <main
+        className={`flex-1 min-w-0 max-w-7xl w-full mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-20 md:pb-10 transition-all duration-200 ${guideDesktopReserveClass}`}
+      >
+        <ErrorBoundary fallbackTitle="Could not load this section">
+          {currentTab === 'libraries' && (
+            <LibraryView
+              rule={activeRule}
+              onStartPractice={handleStartPractice}
+              onSelectElement={(el) => setSelectedElement(el)}
               onNavigateToLibrary={handleNavigateToLibrary}
             />
-          </ErrorBoundary>
-        )}
-        <CalibrateGuideModal />
-      </div>
+          )}
+
+          {currentTab === 'wizard' && (
+            <DoctorNomen
+              onNavigateToLibrary={handleNavigateToLibrary}
+              onSelectElement={(el) => setSelectedElement(el)}
+            />
+          )}
+
+          {currentTab === 'crisscross' && (
+            <CrissCrossBuilder onSelectElement={(el) => setSelectedElement(el)} />
+          )}
+
+          {currentTab === 'oxidation-solver' && (
+            <OxidationSolverTool onSelectElement={(el) => setSelectedElement(el)} />
+          )}
+
+          {currentTab === 'flashcards' && <FlashCardsTool />}
+
+          {currentTab === 'converter' && (
+            <ConverterTool
+              onSelectElement={(el) => setSelectedElement(el)}
+              onNavigateToLibrary={handleNavigateToLibrary}
+            />
+          )}
+
+          {currentTab === 'periodic-table' && (
+            <PeriodicTable onSelectElement={(el) => setSelectedElement(el)} />
+          )}
+
+          {currentTab === 'practice' && (
+            <PracticeView
+              initialSetId={practiceInitialSetId}
+              blockedNotice={blockedRouteNotice}
+              onClearBlockedNotice={() => setBlockedRouteNotice(null)}
+              onSelectElement={(el) => setSelectedElement(el)}
+              onNavigateToLibrary={handleNavigateToLibrary}
+            />
+          )}
+        </ErrorBoundary>
+      </main>
+
+      {/* Clean Footer without author, school, email, or course code */}
+      <footer className="w-full border-t border-slate-200 dark:border-slate-800/80 bg-white/50 dark:bg-slate-900/50 py-6 text-xs text-slate-500 dark:text-slate-400">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-slate-700 dark:text-slate-300">I-LAB</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <button
+              type="button"
+              onClick={() => setSettingsModalOpen(true)}
+              className="hover:text-slate-900 dark:hover:text-white transition cursor-pointer whitespace-nowrap"
+            >
+              Settings &amp; Themes
+            </button>
+            <span>•</span>
+            <button
+              type="button"
+              onClick={() => {
+                applyGuardedRoute(true, 'periodic-table');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="hover:text-slate-900 dark:hover:text-white transition cursor-pointer whitespace-nowrap"
+            >
+              Periodic Table (118)
+            </button>
+            <span>•</span>
+            <button
+              type="button"
+              onClick={() => {
+                applyGuardedRoute(true, 'wizard');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="hover:text-slate-900 dark:hover:text-white transition cursor-pointer whitespace-nowrap"
+            >
+              Doctor Nomen
+            </button>
+          </div>
+        </div>
+      </footer>
+
+      {/* Student Sign In & PIN Change Modal */}
+      <StudentSignInModal />
+
+      {/* Element Detail Modal */}
+      <ElementDetailModal
+        element={selectedElement}
+        onClose={() => setSelectedElement(null)}
+      />
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={settingsModalOpen}
+        onClose={() => setSettingsModalOpen(false)}
+      />
+
+      {/* Virtual Guide Floating Card & Calibration Modal */}
+      <ErrorBoundary fallbackTitle="Virtual Guide paused">
+        <GuideWidget
+          onOpenSettings={() => setSettingsModalOpen(true)}
+          onNavigateToLibrary={handleNavigateToLibrary}
+        />
+      </ErrorBoundary>
+      <CalibrateGuideModal />
     </div>
   );
 }

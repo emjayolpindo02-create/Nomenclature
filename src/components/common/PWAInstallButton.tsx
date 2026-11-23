@@ -50,7 +50,7 @@ export const PWAInstallButton: React.FC = () => {
 
   if (isInstalled) {
     return (
-      <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-semibold border border-emerald-300">
+      <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-semibold border border-emerald-500/30">
         <Check className="w-3.5 h-3.5" />
         Installed
       </span>
@@ -78,7 +78,7 @@ export const PWAInstallButton: React.FC = () => {
     <>
       <button
         onClick={handleInstallClick}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0284c7] hover:bg-[#0369a1] text-white text-xs font-semibold shadow-sm transition cursor-pointer"
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold shadow-sm transition cursor-pointer"
         aria-label="Install I-LAB app offline"
       >
         <Download className="w-3.5 h-3.5" />
@@ -87,31 +87,31 @@ export const PWAInstallButton: React.FC = () => {
 
       {showIOSModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1f3a56]/25 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
           onClick={() => setShowIOSModal(false)}
           role="dialog"
           aria-modal="true"
         >
           <div
-            className="w-full max-w-sm rounded-2xl bg-[#ffffff] border border-[#dbe9f4] p-6 shadow-2xl relative"
+            className="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl relative"
             onClick={(e) => e.stopPropagation()}
           >
             <button
               onClick={() => setShowIOSModal(false)}
-              className="absolute top-4 right-4 p-1.5 rounded-lg text-[#3b5775] hover:bg-[#f4f9fe] hover:text-[#1f3a56] cursor-pointer"
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
               aria-label="Close"
             >
               <X className="w-4 h-4" />
             </button>
-            <div className="w-12 h-12 rounded-xl bg-[#f4f9fe] border border-[#dbe9f4] flex items-center justify-center text-[#0284c7] mb-3">
+            <div className="w-12 h-12 rounded-xl bg-sky-100 dark:bg-sky-950/60 flex items-center justify-center text-sky-600 dark:text-sky-400 mb-3">
               <Share className="w-6 h-6" />
             </div>
-            <h3 className="text-lg font-bold text-[#1f3a56]">
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white">
               Install on iPhone or iPad
             </h3>
-            <p className="mt-2 text-sm text-[#3b5775] space-y-2">
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300 space-y-2">
               <span className="block">
-                1. Tap the <strong>Share</strong> button <Share className="inline w-4 h-4 text-[#0284c7]" /> at the bottom of Safari.
+                1. Tap the <strong>Share</strong> button <Share className="inline w-4 h-4 text-sky-500" /> at the bottom of Safari.
               </span>
               <span className="block">
                 2. Scroll down and select <strong>Add to Home Screen</strong>.
@@ -122,7 +122,7 @@ export const PWAInstallButton: React.FC = () => {
             </p>
             <button
               onClick={() => setShowIOSModal(false)}
-              className="mt-5 w-full py-2.5 rounded-xl bg-[#0284c7] hover:bg-[#0369a1] text-white font-semibold text-sm transition cursor-pointer"
+              className="mt-5 w-full py-2.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold text-sm hover:opacity-90 transition"
             >
               Close
             </button>

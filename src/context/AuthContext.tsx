@@ -1,23 +1,18 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { PracticeProgress, SectionPolicySettings } from '../types/chemistry';
 import {
-  User,
-  onAuthStateChanged,
-  signInAnonymously,
-  signInWithPopup,
-  signOut as firebaseSignOut,
-} from 'firebase/auth';
+  advanceClockHighWater,
+  DEFAULT_SECTION_POLICY,
+  isSessionTokenValid,
+  StudentSession,
+  StudentUser,
+} from '../engine/sheetsSync';
 import {
-  firebaseAuth,
-  googleProvider,
-  isFirebaseReady,
-  testConnection,
-} from '../config/firebase';
-import {
-  checkIsTeacherUid,
-  createOrUpdateStudentProfile,
-  subscribeToStudentProfile,
-} from '../services/firebaseService';
-import { StudentProfile } from '../types/chemistry';
+  changeStudentPin,
+  loginStudent,
+  logoutStudent,
+  syncStudentSession,
+} from '../services/sheetsClient';
 import {
   hasStorageFailure,
   safeGetItem,
@@ -25,388 +20,454 @@ import {
   safeSetItem,
   subscribeStorageFailure,
 } from '../utils/safeStorage';
+import {
+  readOfflineRecord,
+  removeOfflineRecord,
+  writeOfflineRecord,
+} from '../utils/offlineDb';
 
-const PROFILE_CACHE_PREFIX = 'ilab_student_profile_v1_';
-const LOCAL_GUEST_FLAG_KEY = 'ilab_local_guest_mode_v1';
+const SESSION_STORAGE_KEY = 'ilab_student_session_v1';
+const POLICY_STORAGE_KEY = 'ilab_section_policy_v1';
+const CLOCK_HWM_STORAGE_KEY = 'ilab_clock_hwm_v1';
 
-export type AuthModalMode = 'student' | 'teacher' | 'profile-setup';
+export interface RemoteSyncPayload {
+  username: string;
+  progressMap?: Record<string, PracticeProgress>;
+  unlockOverrides?: string[];
+  settings?: SectionPolicySettings;
+  serverNowIso?: string;
+  syncedAtMs: number;
+}
 
-export interface AuthModalOptions {
-  mode?: AuthModalMode;
+export interface SignInModalOptions {
+  mode?: 'login' | 'change-pin';
   reason?: string;
-  onSuccess?: () => void;
+  onSuccess?: (session: StudentSession) => Promise<void> | void;
 }
 
 interface AuthContextType {
-  firebaseUser: User | null;
-  studentProfile: StudentProfile | null;
-  isTeacher: boolean;
-  isGuestSession: boolean;
-  needsProfileSetup: boolean;
-  authReady: boolean;
+  session: StudentSession | null;
+  user: StudentUser | null;
   authLoading: boolean;
   authError: string | null;
-  storageUnavailable: boolean;
+  sectionPolicy: SectionPolicySettings;
+  clockHighWaterMs: number | null;
+  remoteSync: RemoteSyncPayload | null;
   signInModalOpen: boolean;
-  signInModalMode: AuthModalMode;
+  signInModalMode: 'login' | 'change-pin';
   signInModalReason: string | null;
-  openSignInModal: (options?: AuthModalOptions) => void;
+  storageUnavailable: boolean;
+  openSignInModal: (options?: SignInModalOptions) => void;
   closeSignInModal: () => void;
-  signInWithGoogle: (asTeacher?: boolean) => Promise<{ ok: boolean; error?: string }>;
-  signInAsGuest: () => Promise<{ ok: boolean; error?: string }>;
-  saveProfileSetup: (displayName: string, section: string) => Promise<{ ok: boolean; error?: string }>;
+  signInWithCredentials: (
+    username: string,
+    pin: string
+  ) => Promise<{ ok: boolean; mustChangePin?: boolean; error?: string }>;
+  submitPinChange: (
+    currentPin: string,
+    newPin: string
+  ) => Promise<{ ok: boolean; error?: string }>;
   signOut: () => Promise<void>;
   clearAuthError: () => void;
+  applyRemoteSyncData: (payload: Omit<RemoteSyncPayload, 'syncedAtMs'>) => void;
+  refreshSessionFromServer: () => Promise<{
+    ok: boolean;
+    error?: string;
+    sessionExpired?: boolean;
+  }>;
+  handleExpiredSession: (message?: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-function loadCachedProfile(uid: string): StudentProfile | null {
+function loadStoredSession(): StudentSession | null {
   try {
-    const raw = safeGetItem(`${PROFILE_CACHE_PREFIX}${uid}`);
+    const raw = safeGetItem(SESSION_STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as StudentProfile;
+    const parsed = JSON.parse(raw) as StudentSession;
+    if (!isSessionTokenValid(parsed)) {
+      safeRemoveItem(SESSION_STORAGE_KEY);
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }
 }
 
-function saveCachedProfile(profile: StudentProfile | null): void {
-  if (!profile) return;
+function loadStoredPolicy(): SectionPolicySettings {
   try {
-    safeSetItem(`${PROFILE_CACHE_PREFIX}${profile.uid}`, JSON.stringify(profile));
+    const raw = safeGetItem(POLICY_STORAGE_KEY);
+    if (!raw) return DEFAULT_SECTION_POLICY;
+    return { ...DEFAULT_SECTION_POLICY, ...JSON.parse(raw) };
   } catch {
-    // ignore storage errors
+    return DEFAULT_SECTION_POLICY;
+  }
+}
+
+function loadClockHighWater(): number | null {
+  try {
+    const raw = safeGetItem(CLOCK_HWM_STORAGE_KEY);
+    if (!raw) return null;
+    const num = Number(raw);
+    return Number.isFinite(num) && num > 0 ? num : null;
+  } catch {
+    return null;
   }
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
-  const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null);
-  const [isTeacher, setIsTeacher] = useState<boolean>(false);
-  const [localGuestMode, setLocalGuestMode] = useState<boolean>(() => {
-    try {
-      return safeGetItem(LOCAL_GUEST_FLAG_KEY) === '1';
-    } catch {
-      return false;
-    }
-  });
-  const [authReady, setAuthReady] = useState<boolean>(() => !isFirebaseReady());
+  const [session, setSession] = useState<StudentSession | null>(() => loadStoredSession());
   const [authLoading, setAuthLoading] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [profileLoadedForUid, setProfileLoadedForUid] = useState<string | null>(null);
+  const [sectionPolicy, setSectionPolicy] = useState<SectionPolicySettings>(() =>
+    loadStoredPolicy()
+  );
+  const [clockHighWaterMs, setClockHighWaterMs] = useState<number | null>(() =>
+    loadClockHighWater()
+  );
+  const [remoteSync, setRemoteSync] = useState<RemoteSyncPayload | null>(null);
+
   const [signInModalOpen, setSignInModalOpen] = useState<boolean>(false);
-  const [signInModalMode, setSignInModalMode] = useState<AuthModalMode>('student');
+  const [signInModalMode, setSignInModalMode] = useState<'login' | 'change-pin'>('login');
   const [signInModalReason, setSignInModalReason] = useState<string | null>(null);
   const [storageUnavailable, setStorageUnavailable] = useState<boolean>(() => hasStorageFailure());
-
-  const onSuccessRef = useRef<(() => void) | null>(null);
-  const actionLockRef = useRef<boolean>(false);
+  const onSuccessCallbackRef = useRef<
+    ((s: StudentSession) => Promise<void> | void) | null
+  >(null);
 
   useEffect(() => {
     setStorageUnavailable(hasStorageFailure());
     return subscribeStorageFailure((failed) => setStorageUnavailable(failed));
   }, []);
 
-  // Verify Firestore connectivity gently once when Firebase is active
+  // Recover session/policy from IndexedDB if localStorage was cleared while offline
   useEffect(() => {
-    if (isFirebaseReady()) {
-      void testConnection();
-    }
-  }, []);
-
-  // Listen to Firebase Auth state
-  useEffect(() => {
-    if (!firebaseAuth) {
-      setAuthReady(true);
-      return;
-    }
-    const unsub = onAuthStateChanged(firebaseAuth, (user) => {
-      setFirebaseUser(user);
-      setAuthReady(true);
-      if (!user) {
-        setStudentProfile(null);
-        setIsTeacher(false);
-        setProfileLoadedForUid(null);
-      }
-    });
-    return () => unsub();
-  }, []);
-
-  // Listen to teacher check + live student profile when signed in
-  useEffect(() => {
-    if (!firebaseUser) return;
     let active = true;
-    const uid = firebaseUser.uid;
-
-    // Load cached student profile immediately for offline resilience
-    const cached = loadCachedProfile(uid);
-    if (cached) {
-      setStudentProfile(cached);
-    }
-
-    if (firebaseUser.emailVerified && !firebaseUser.isAnonymous) {
-      void checkIsTeacherUid(uid).then((teacherFlag) => {
-        if (active) setIsTeacher(teacherFlag);
-      });
-    } else {
-      setIsTeacher(false);
-    }
-
-    const unsubProfile = subscribeToStudentProfile(
-      uid,
-      (profile) => {
-        if (!active) return;
-        setProfileLoadedForUid(uid);
-        if (profile) {
-          setStudentProfile(profile);
-          saveCachedProfile(profile);
-        } else if (!cached) {
-          setStudentProfile(null);
-        }
-      },
-      () => {
-        if (active) {
-          setProfileLoadedForUid(uid);
+    void (async () => {
+      if (!session) {
+        const idbSession = await readOfflineRecord<StudentSession>(SESSION_STORAGE_KEY);
+        if (active && idbSession && isSessionTokenValid(idbSession)) {
+          setSession(idbSession);
+          safeSetItem(SESSION_STORAGE_KEY, JSON.stringify(idbSession));
         }
       }
-    );
-
+      if (!safeGetItem(POLICY_STORAGE_KEY)) {
+        const idbPolicy = await readOfflineRecord<SectionPolicySettings>(POLICY_STORAGE_KEY);
+        if (active && idbPolicy) {
+          const restored = { ...DEFAULT_SECTION_POLICY, ...idbPolicy };
+          setSectionPolicy(restored);
+          safeSetItem(POLICY_STORAGE_KEY, JSON.stringify(restored));
+        }
+      }
+    })();
     return () => {
       active = false;
-      unsubProfile();
     };
-  }, [firebaseUser]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const needsProfileSetup = Boolean(
-    firebaseUser &&
-      !isTeacher &&
-      profileLoadedForUid === firebaseUser.uid &&
-      (!studentProfile || !studentProfile.displayName.trim() || !studentProfile.section.trim())
+  const persistSession = useCallback((next: StudentSession | null) => {
+    setSession(next);
+    if (next) {
+      safeSetItem(SESSION_STORAGE_KEY, JSON.stringify(next));
+      void writeOfflineRecord(SESSION_STORAGE_KEY, next);
+    } else {
+      safeRemoveItem(SESSION_STORAGE_KEY);
+      void removeOfflineRecord(SESSION_STORAGE_KEY);
+    }
+  }, []);
+
+  const recordClockObservation = useCallback((serverNowIso?: string) => {
+    const serverMs = serverNowIso ? Date.parse(serverNowIso) : null;
+    setClockHighWaterMs((prev) => {
+      // Only advance monotonic clock when not already rolled back below previous observation
+      const deviceNow = Date.now();
+      const safeDeviceNow =
+        prev !== null && deviceNow < prev - 60_000 ? prev : deviceNow;
+      const next = advanceClockHighWater(prev, safeDeviceNow, serverMs);
+      safeSetItem(CLOCK_HWM_STORAGE_KEY, String(next));
+      return next;
+    });
+  }, []);
+
+  // Track monotonic clock progression every 30s while app is open
+  useEffect(() => {
+    recordClockObservation();
+    const timer = setInterval(() => {
+      recordClockObservation();
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [recordClockObservation]);
+
+  const applyRemoteSyncData = useCallback(
+    (payload: Omit<RemoteSyncPayload, 'syncedAtMs'>) => {
+      if (payload.serverNowIso) {
+        recordClockObservation(payload.serverNowIso);
+      }
+
+      if (payload.settings) {
+        const normalizedPolicy: SectionPolicySettings = {
+          passingScore: Math.min(
+            100,
+            Math.max(50, Number(payload.settings.passingScore || 70))
+          ),
+          waitingTimeHours: Math.max(0, Number(payload.settings.waitingTimeHours || 0)),
+          inactivityDays: Math.max(1, Number(payload.settings.inactivityDays || 7)),
+          cooldownMinutes: Math.max(1, Number(payload.settings.cooldownMinutes || 15)),
+          sessionExpiryDays: Math.max(1, Number(payload.settings.sessionExpiryDays || 60)),
+          syncedAt: new Date().toISOString(),
+        };
+        setSectionPolicy(normalizedPolicy);
+        safeSetItem(POLICY_STORAGE_KEY, JSON.stringify(normalizedPolicy));
+        void writeOfflineRecord(POLICY_STORAGE_KEY, normalizedPolicy);
+      }
+
+      setRemoteSync({
+        ...payload,
+        syncedAtMs: Date.now(),
+      });
+    },
+    [recordClockObservation]
   );
 
-  // Prompt for name & section right after first login if missing
-  useEffect(() => {
-    if (needsProfileSetup && !signInModalOpen && signInModalMode !== 'teacher') {
-      setSignInModalMode('profile-setup');
-      setSignInModalReason('Welcome! Enter your name and section so your teacher can approve you.');
-      setSignInModalOpen(true);
-    }
-  }, [needsProfileSetup, signInModalOpen, signInModalMode]);
+  const handleExpiredSession = useCallback(
+    (message?: string) => {
+      persistSession(null);
+      setAuthError(message || 'Your sign-in session expired. Please sign in with your PIN again.');
+    },
+    [persistSession]
+  );
 
-  const openSignInModal = useCallback((options: AuthModalOptions = {}) => {
+  const refreshSessionFromServer = useCallback(async (): Promise<{
+    ok: boolean;
+    error?: string;
+    sessionExpired?: boolean;
+  }> => {
+    if (!session) {
+      return { ok: false, error: 'Sign in first to sync with Google Sheets.' };
+    }
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return { ok: false, error: 'offline' };
+    }
+    if (!isSessionTokenValid(session)) {
+      handleExpiredSession();
+      return {
+        ok: false,
+        sessionExpired: true,
+        error: 'Your sign-in session expired. Please sign in with your PIN again.',
+      };
+    }
+
+    try {
+      const res = await syncStudentSession(session.sessionToken);
+      if (!res.ok) {
+        if (res.sessionExpired) {
+          handleExpiredSession(res.error);
+        }
+        return {
+          ok: false,
+          sessionExpired: res.sessionExpired,
+          error: res.error || 'Could not sync session with Google Sheets.',
+        };
+      }
+
+      if (res.user) {
+        persistSession({
+          ...session,
+          user: res.user,
+        });
+      }
+
+      applyRemoteSyncData({
+        username: res.user?.username || session.user.username,
+        progressMap: res.progressMap,
+        unlockOverrides: res.unlockOverrides,
+        settings: res.settings,
+        serverNowIso: res.serverNowIso,
+      });
+      return { ok: true };
+    } catch (err) {
+      // Stay offline-safe when network or Apps Script cannot be reached
+      return {
+        ok: false,
+        error: err instanceof Error && err.message ? err.message : 'Could not reach Google Sheets.',
+      };
+    }
+  }, [session, persistSession, applyRemoteSyncData, handleExpiredSession]);
+
+  // Sync section settings & progress on mount and whenever device reconnects
+  useEffect(() => {
+    if (!session) return;
+    void refreshSessionFromServer();
+
+    const handleOnline = () => {
+      void refreshSessionFromServer();
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [session?.sessionToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openSignInModal = useCallback((options: SignInModalOptions = {}) => {
     setAuthError(null);
-    setSignInModalMode(options.mode || 'student');
+    setSignInModalMode(options.mode || 'login');
     setSignInModalReason(options.reason || null);
-    onSuccessRef.current = options.onSuccess || null;
+    onSuccessCallbackRef.current = options.onSuccess || null;
     setSignInModalOpen(true);
   }, []);
 
   const closeSignInModal = useCallback(() => {
     setSignInModalOpen(false);
     setSignInModalReason(null);
-    onSuccessRef.current = null;
+    onSuccessCallbackRef.current = null;
   }, []);
 
-  const signInWithGoogle = useCallback(
-    async (asTeacher = false): Promise<{ ok: boolean; error?: string }> => {
-      if (actionLockRef.current) return { ok: false, error: 'Please wait...' };
-      if (!firebaseAuth || !googleProvider) {
-        const msg =
-          'Google Sign-In requires an online hosted copy with a valid Firebase API key. You can continue as a guest offline.';
-        setAuthError(msg);
-        return { ok: false, error: msg };
-      }
-
-      actionLockRef.current = true;
+  const signInWithCredentials = useCallback(
+    async (username: string, pin: string) => {
       setAuthError(null);
       setAuthLoading(true);
       try {
-        const cred = await signInWithPopup(firebaseAuth, googleProvider);
-        try {
-          safeRemoveItem(LOCAL_GUEST_FLAG_KEY);
-        } catch {
-          // ignore
-        }
-        setLocalGuestMode(false);
-
-        const teacherMatch = cred.user.emailVerified
-          ? await checkIsTeacherUid(cred.user.uid)
-          : false;
-        setIsTeacher(teacherMatch);
-
-        if (asTeacher && !teacherMatch) {
-          setSignInModalMode('teacher');
-          return { ok: true };
+        const res = await loginStudent(username, pin);
+        if (!res.ok || !res.sessionToken || !res.user) {
+          const msg = res.error || 'Could not sign in. Check your username and PIN.';
+          setAuthError(msg);
+          return { ok: false, error: msg };
         }
 
-        if (teacherMatch) {
-          setSignInModalOpen(false);
-          onSuccessRef.current?.();
-          onSuccessRef.current = null;
-          return { ok: true };
+        const nextSession: StudentSession = {
+          sessionToken: res.sessionToken,
+          tokenExpiresAt:
+            res.tokenExpiresAt ||
+            new Date(Date.now() + 60 * 86400000).toISOString(),
+          user: res.user,
+        };
+
+        persistSession(nextSession);
+        applyRemoteSyncData({
+          username: res.user.username,
+          progressMap: res.progressMap,
+          unlockOverrides: res.unlockOverrides,
+          settings: res.settings,
+          serverNowIso: res.serverNowIso,
+        });
+
+        const cb = onSuccessCallbackRef.current;
+        if (res.user.mustChangePin) {
+          setSignInModalMode('change-pin');
+          setSignInModalReason(
+            'Your teacher reset your PIN. Please set a new personal PIN to continue.'
+          );
+          if (cb) {
+            void cb(nextSession);
+            onSuccessCallbackRef.current = null;
+          }
+          return { ok: true, mustChangePin: true };
         }
 
-        // Student login: modal automatically switches to profile-setup if student doc doesn't exist
         setSignInModalOpen(false);
-        onSuccessRef.current?.();
-        onSuccessRef.current = null;
-        return { ok: true };
+        setSignInModalReason(null);
+        if (cb) {
+          onSuccessCallbackRef.current = null;
+          await cb(nextSession);
+        }
+        return { ok: true, mustChangePin: false };
       } catch (err) {
-        const rawMsg = err instanceof Error ? err.message : 'Google Sign-In failed.';
-        const friendly = rawMsg.includes('popup-closed-by-user')
-          ? 'Sign-in window was closed before finishing.'
-          : rawMsg.includes('network-request-failed')
-          ? 'Network unavailable. Try continuing as a guest offline.'
-          : rawMsg;
-        setAuthError(friendly);
-        return { ok: false, error: friendly };
+        const msg =
+          err instanceof Error && err.message === 'offline'
+            ? 'You are offline. Reconnect to sign in with your username and PIN.'
+            : err instanceof Error && err.message
+            ? err.message
+            : 'Could not reach the Google Sheet service. Please check your connection.';
+        setAuthError(msg);
+        return { ok: false, error: msg };
       } finally {
         setAuthLoading(false);
-        actionLockRef.current = false;
       }
     },
-    []
+    [persistSession, applyRemoteSyncData]
   );
 
-  const signInAsGuest = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
-    if (actionLockRef.current) return { ok: false, error: 'Please wait...' };
-    actionLockRef.current = true;
-    setAuthError(null);
-    setAuthLoading(true);
-
-    try {
-      if (firebaseAuth && (typeof navigator === 'undefined' || navigator.onLine)) {
-        try {
-          await signInAnonymously(firebaseAuth);
-          setLocalGuestMode(false);
-          try {
-            safeRemoveItem(LOCAL_GUEST_FLAG_KEY);
-          } catch {
-            // ignore
-          }
-          setSignInModalOpen(false);
-          onSuccessRef.current?.();
-          onSuccessRef.current = null;
-          return { ok: true };
-        } catch {
-          // Fall back gracefully to local guest session if anonymous provider is disabled or unreachable
-        }
+  const submitPinChange = useCallback(
+    async (currentPin: string, newPin: string) => {
+      if (!session) {
+        return { ok: false, error: 'Please sign in first.' };
       }
-
-      setLocalGuestMode(true);
-      try {
-        safeSetItem(LOCAL_GUEST_FLAG_KEY, '1');
-      } catch {
-        // ignore
-      }
-      setSignInModalOpen(false);
-      onSuccessRef.current?.();
-      onSuccessRef.current = null;
-      return { ok: true };
-    } finally {
-      setAuthLoading(false);
-      actionLockRef.current = false;
-    }
-  }, []);
-
-  const saveProfileSetup = useCallback(
-    async (displayName: string, section: string): Promise<{ ok: boolean; error?: string }> => {
-      if (actionLockRef.current) return { ok: false, error: 'Please wait...' };
-      const cleanName = displayName.trim();
-      const cleanSection = section.trim();
-      if (!cleanName) {
-        const msg = 'Please enter your full name.';
-        setAuthError(msg);
-        return { ok: false, error: msg };
-      }
-      if (!cleanSection) {
-        const msg = 'Please enter your section (for example: 3F).';
-        setAuthError(msg);
-        return { ok: false, error: msg };
-      }
-      if (!firebaseUser) {
-        const msg = 'Please sign in first.';
-        setAuthError(msg);
-        return { ok: false, error: msg };
-      }
-
-      actionLockRef.current = true;
-      setAuthLoading(true);
       setAuthError(null);
+      setAuthLoading(true);
       try {
-        await createOrUpdateStudentProfile({
-          uid: firebaseUser.uid,
-          displayName: cleanName,
-          section: cleanSection,
-          email: firebaseUser.email,
-          isAnonymous: firebaseUser.isAnonymous,
-        });
+        const res = await changeStudentPin(session.sessionToken, currentPin, newPin);
+        if (!res.ok || !res.sessionToken) {
+          if (res.sessionExpired) {
+            handleExpiredSession(res.error);
+          }
+          const msg = res.error || 'Could not update PIN.';
+          setAuthError(msg);
+          return { ok: false, error: msg };
+        }
+
+        const updatedSession: StudentSession = {
+          sessionToken: res.sessionToken,
+          tokenExpiresAt: res.tokenExpiresAt || session.tokenExpiresAt,
+          user: {
+            ...session.user,
+            mustChangePin: false,
+          },
+        };
+        persistSession(updatedSession);
+        if (res.serverNowIso) {
+          recordClockObservation(res.serverNowIso);
+        }
         setSignInModalOpen(false);
         setSignInModalReason(null);
         return { ok: true };
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Could not save your profile right now.';
+        const msg =
+          err instanceof Error && err.message === 'offline'
+            ? 'You are offline. Connect to update your PIN.'
+            : 'Could not update PIN right now. Please try again.';
         setAuthError(msg);
         return { ok: false, error: msg };
       } finally {
         setAuthLoading(false);
-        actionLockRef.current = false;
       }
     },
-    [firebaseUser]
+    [session, persistSession, handleExpiredSession, recordClockObservation]
   );
 
   const signOut = useCallback(async () => {
+    const token = session?.sessionToken;
+    persistSession(null);
+    setRemoteSync(null);
     setAuthError(null);
-    setLocalGuestMode(false);
-    setIsTeacher(false);
-    try {
-      safeRemoveItem(LOCAL_GUEST_FLAG_KEY);
-      if (firebaseUser?.uid) {
-        safeRemoveItem(`${PROFILE_CACHE_PREFIX}${firebaseUser.uid}`);
-      }
-    } catch {
-      // ignore
+    if (token && (typeof navigator === 'undefined' || navigator.onLine)) {
+      await logoutStudent(token);
     }
-    setStudentProfile(null);
-    if (firebaseAuth) {
-      try {
-        await firebaseSignOut(firebaseAuth);
-      } catch {
-        // ignore
-      }
-    }
-  }, [firebaseUser?.uid]);
+  }, [session, persistSession]);
 
   const clearAuthError = () => setAuthError(null);
-
-  const isGuestSession = Boolean(
-    localGuestMode || !firebaseUser || (firebaseUser.isAnonymous && !studentProfile)
-  );
 
   return (
     <AuthContext.Provider
       value={{
-        firebaseUser,
-        studentProfile,
-        isTeacher,
-        isGuestSession,
-        needsProfileSetup,
-        authReady,
+        session,
+        user: session?.user || null,
         authLoading,
         authError,
-        storageUnavailable,
+        sectionPolicy,
+        clockHighWaterMs,
+        remoteSync,
         signInModalOpen,
         signInModalMode,
         signInModalReason,
+        storageUnavailable,
         openSignInModal,
         closeSignInModal,
-        signInWithGoogle,
-        signInAsGuest,
-        saveProfileSetup,
+        signInWithCredentials,
+        submitPinChange,
         signOut,
         clearAuthError,
+        applyRemoteSyncData,
+        refreshSessionFromServer,
+        handleExpiredSession,
       }}
     >
       {children}

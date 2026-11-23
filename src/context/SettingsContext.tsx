@@ -4,8 +4,8 @@ import { useAuth } from './AuthContext';
 import { safeGetItem, safeRemoveItem, safeSetItem } from '../utils/safeStorage';
 
 const DEFAULT_SETTINGS: UserSettings = {
-  theme: 'sky',
-  accentColor: 'blue',
+  theme: 'system',
+  accentColor: 'indigo',
   fontFamily: 'system',
   fontSize: 'md',
   density: 'comfortable',
@@ -14,34 +14,23 @@ const DEFAULT_SETTINGS: UserSettings = {
   realSubscripts: true,
   periodicColorBy: 'category',
   hintsEnabled: true,
-  passingScore: 75,
+  passingScore: 70,
 };
 
 const LEGACY_STORAGE_KEY = 'compound_naming_guide_settings_v1';
 
-function normalizeLightTheme(raw: unknown): UserSettings['theme'] {
-  if (raw === 'cream' || raw === 'sepia') return 'cream';
-  if (raw === 'mint') return 'mint';
-  return 'sky';
+function getStorageKey(username: string | undefined): string {
+  return username ? `ilab_settings_v2_${username.toLowerCase()}` : 'ilab_settings_v2_guest';
 }
 
-function getStorageKey(uid: string | undefined): string {
-  return uid ? `ilab_settings_v3_${uid}` : 'ilab_settings_v3_guest';
-}
-
-function loadSettingsForUser(uid: string | undefined): UserSettings {
+function loadSettingsForUser(username: string | undefined): UserSettings {
   try {
-    const stored = safeGetItem(getStorageKey(uid));
+    const stored = safeGetItem(getStorageKey(username));
     if (stored) {
-      const parsed = JSON.parse(stored) as Partial<UserSettings> & { theme?: unknown };
-      return {
-        ...DEFAULT_SETTINGS,
-        ...parsed,
-        theme: normalizeLightTheme(parsed.theme),
-      };
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
     }
-  } catch {
-    // fallback safely
+  } catch (e) {
+    console.warn('Could not read settings from storage:', e);
   }
   return DEFAULT_SETTINGS;
 }
@@ -55,93 +44,103 @@ interface SettingsContextType {
 const SettingsContext = createContext<SettingsContextType | null>(null);
 
 export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { firebaseUser } = useAuth();
-  const activeUid = firebaseUser?.uid;
-  const [settings, setSettings] = useState<UserSettings>(() => loadSettingsForUser(activeUid));
+  const { user, sectionPolicy } = useAuth();
+  const [settings, setSettings] = useState<UserSettings>(() => loadSettingsForUser(undefined));
 
   useEffect(() => {
     safeRemoveItem(LEGACY_STORAGE_KEY);
   }, []);
 
+  // Load user-scoped settings when signed-in username changes
   useEffect(() => {
-    setSettings(loadSettingsForUser(activeUid));
-  }, [activeUid]);
+    const loaded = loadSettingsForUser(user?.username);
+    setSettings({
+      ...loaded,
+      passingScore: sectionPolicy.passingScore || loaded.passingScore,
+    });
+  }, [user?.username, sectionPolicy.passingScore]);
 
   const persistSettings = (updated: UserSettings) => {
-    safeSetItem(getStorageKey(activeUid), JSON.stringify(updated));
+    safeSetItem(getStorageKey(user?.username), JSON.stringify(updated));
   };
 
   const updateSettings = (partial: Partial<UserSettings>) => {
     setSettings((prev) => {
-      const updated = {
-        ...prev,
-        ...partial,
-        theme: normalizeLightTheme(partial.theme ?? prev.theme),
-      };
+      const updated = { ...prev, ...partial };
       persistSettings(updated);
       return updated;
     });
   };
 
   const resetSettings = () => {
-    const resetVal: UserSettings = { ...DEFAULT_SETTINGS };
+    const resetVal: UserSettings = {
+      ...DEFAULT_SETTINGS,
+      passingScore: sectionPolicy.passingScore || DEFAULT_SETTINGS.passingScore,
+    };
     setSettings(resetVal);
     persistSettings(resetVal);
   };
 
-  // Apply bright white-forward palette CSS variables with navy ink & subtle blue accents
+  // Apply CSS variables and classes to document root for instant live preview
   useEffect(() => {
     const root = document.documentElement;
-    const effectiveTheme = normalizeLightTheme(settings.theme);
 
-    root.classList.remove(
-      'theme-light',
-      'theme-dark',
-      'theme-sepia',
-      'theme-high-contrast',
-      'dark',
-      'theme-sky',
-      'theme-cream',
-      'theme-mint'
-    );
-
-    if (effectiveTheme === 'cream') {
-      root.classList.add('theme-cream');
-      root.style.setProperty('--bg-main', '#fdfcf9');
-      root.style.setProperty('--bg-card', '#ffffff');
-      root.style.setProperty('--bg-card-subtle', '#f7f6f2');
-      root.style.setProperty('--border-color', '#dbe9f4');
-    } else if (effectiveTheme === 'mint') {
-      root.classList.add('theme-mint');
-      root.style.setProperty('--bg-main', '#f8fcfb');
-      root.style.setProperty('--bg-card', '#ffffff');
-      root.style.setProperty('--bg-card-subtle', '#eff8f6');
-      root.style.setProperty('--border-color', '#dbe9f4');
-    } else {
-      root.classList.add('theme-sky');
-      root.style.setProperty('--bg-main', '#fbfdff');
-      root.style.setProperty('--bg-card', '#ffffff');
-      root.style.setProperty('--bg-card-subtle', '#f4f9fe');
-      root.style.setProperty('--border-color', '#dbe9f4');
+    let effectiveTheme = settings.theme;
+    if (effectiveTheme === 'system') {
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      effectiveTheme = prefersDark ? 'dark' : 'light';
     }
 
-    root.style.setProperty('--text-primary', '#1f3a56');
-    root.style.setProperty('--text-secondary', '#3b5775');
-    root.style.setProperty('--text-muted', '#526d88');
+    root.classList.remove('theme-light', 'theme-dark', 'theme-sepia', 'theme-high-contrast', 'dark');
 
-    const accentColors: Record<
-      string,
-      { primary: string; hover: string; light: string; border: string }
-    > = {
-      indigo: { primary: '#2563eb', hover: '#1d4ed8', light: 'rgba(37, 99, 235, 0.14)', border: '#60a5fa' },
-      blue: { primary: '#0284c7', hover: '#0369a1', light: 'rgba(2, 132, 199, 0.14)', border: '#38bdf8' },
-      emerald: { primary: '#0d9488', hover: '#0f766e', light: 'rgba(13, 148, 136, 0.14)', border: '#2dd4bf' },
-      amber: { primary: '#0284c7', hover: '#0369a1', light: 'rgba(2, 132, 199, 0.14)', border: '#38bdf8' },
-      rose: { primary: '#2563eb', hover: '#1d4ed8', light: 'rgba(37, 99, 235, 0.14)', border: '#60a5fa' },
-      teal: { primary: '#0d9488', hover: '#0f766e', light: 'rgba(13, 148, 136, 0.14)', border: '#2dd4bf' },
-      violet: { primary: '#3b82f6', hover: '#2563eb', light: 'rgba(59, 130, 246, 0.14)', border: '#60a5fa' },
+    if (effectiveTheme === 'dark') {
+      root.classList.add('theme-dark', 'dark');
+      root.style.setProperty('--bg-main', '#0f172a');
+      root.style.setProperty('--bg-card', '#1e293b');
+      root.style.setProperty('--bg-card-subtle', '#334155');
+      root.style.setProperty('--border-color', '#334155');
+      root.style.setProperty('--text-primary', '#f8fafc');
+      root.style.setProperty('--text-secondary', '#94a3b8');
+      root.style.setProperty('--text-muted', '#64748b');
+    } else if (effectiveTheme === 'sepia') {
+      root.classList.add('theme-sepia');
+      root.style.setProperty('--bg-main', '#fbf0d9');
+      root.style.setProperty('--bg-card', '#f4e3c1');
+      root.style.setProperty('--bg-card-subtle', '#ead2a8');
+      root.style.setProperty('--border-color', '#d9bd8f');
+      root.style.setProperty('--text-primary', '#3e2723');
+      root.style.setProperty('--text-secondary', '#5d4037');
+      root.style.setProperty('--text-muted', '#8d6e63');
+    } else if (effectiveTheme === 'high-contrast') {
+      root.classList.add('theme-high-contrast', 'dark');
+      root.style.setProperty('--bg-main', '#000000');
+      root.style.setProperty('--bg-card', '#121212');
+      root.style.setProperty('--bg-card-subtle', '#242424');
+      root.style.setProperty('--border-color', '#ffffff');
+      root.style.setProperty('--text-primary', '#ffffff');
+      root.style.setProperty('--text-secondary', '#e0e0e0');
+      root.style.setProperty('--text-muted', '#b0b0b0');
+    } else {
+      root.classList.add('theme-light');
+      root.style.setProperty('--bg-main', '#f8fafc');
+      root.style.setProperty('--bg-card', '#ffffff');
+      root.style.setProperty('--bg-card-subtle', '#f1f5f9');
+      root.style.setProperty('--border-color', '#e2e8f0');
+      root.style.setProperty('--text-primary', '#0f172a');
+      root.style.setProperty('--text-secondary', '#475569');
+      root.style.setProperty('--text-muted', '#94a3b8');
+    }
+
+    const accentColors: Record<string, { primary: string; hover: string; light: string; border: string }> = {
+      indigo: { primary: '#6366f1', hover: '#4f46e5', light: 'rgba(99, 102, 241, 0.15)', border: '#818cf8' },
+      blue: { primary: '#2563eb', hover: '#1d4ed8', light: 'rgba(37, 99, 235, 0.15)', border: '#60a5fa' },
+      emerald: { primary: '#059669', hover: '#047857', light: 'rgba(5, 150, 105, 0.15)', border: '#34d399' },
+      amber: { primary: '#d97706', hover: '#b45309', light: 'rgba(217, 119, 6, 0.15)', border: '#fbbf24' },
+      rose: { primary: '#e11d48', hover: '#be123c', light: 'rgba(225, 29, 72, 0.15)', border: '#fb7185' },
+      teal: { primary: '#0d9488', hover: '#0f766e', light: 'rgba(13, 148, 136, 0.15)', border: '#2dd4bf' },
+      violet: { primary: '#7c3aed', hover: '#6d28d9', light: 'rgba(124, 58, 237, 0.15)', border: '#a78bfa' },
     };
-    const currentAccent = accentColors[settings.accentColor] || accentColors.blue;
+    const currentAccent = accentColors[settings.accentColor] || accentColors.indigo;
     root.style.setProperty('--accent-color', currentAccent.primary);
     root.style.setProperty('--accent-hover', currentAccent.hover);
     root.style.setProperty('--accent-light', currentAccent.light);
@@ -149,16 +148,12 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     if (settings.fontFamily === 'serif') {
       root.style.setProperty('--app-font', 'Georgia, Cambria, "Times New Roman", Times, serif');
-      root.style.setProperty('--display-font', 'Georgia, Cambria, "Times New Roman", Times, serif');
     } else if (settings.fontFamily === 'mono') {
       root.style.setProperty('--app-font', 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace');
-      root.style.setProperty('--display-font', 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace');
     } else if (settings.fontFamily === 'dyslexic') {
       root.style.setProperty('--app-font', 'Comic Sans MS, "Trebuchet MS", Verdana, sans-serif');
-      root.style.setProperty('--display-font', '"Fredoka", Comic Sans MS, "Trebuchet MS", sans-serif');
     } else {
-      root.style.setProperty('--app-font', '"Poppins", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif');
-      root.style.setProperty('--display-font', '"Fredoka", "Poppins", ui-rounded, "SF Pro Rounded", system-ui, sans-serif');
+      root.style.setProperty('--app-font', 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif');
     }
 
     const sizeMap = { sm: '14px', md: '16px', lg: '18px', xl: '20px' };
