@@ -4,3 +4,4 @@
 declare const __APP_VERSION__: string | undefined;
 declare const __APP_BUILD_DATE__: string | undefined;
 declare const __APP_IS_SINGLE_FILE__: boolean | undefined;
+declare const __SINGLE_FILE_SIZE_BYTES__: number | undefined;

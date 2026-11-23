@@ -17,6 +17,9 @@ import {
 import {
   checkForAppUpdate,
   compareVersions,
+  formatBytesSize,
+  getEffectiveUpdateUrl,
+  getOfflineDownloadUrl,
   isFileProtocol,
 } from '../config/appInfo';
 
@@ -269,5 +272,14 @@ describe('appInfo version comparison and update checker', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it('formats byte sizes and resolves download and update URLs cleanly', () => {
+    assert.equal(formatBytesSize(0), '~1.1 MB');
+    assert.equal(formatBytesSize(512), '512 B');
+    assert.equal(formatBytesSize(153600), '150 KB');
+    assert.equal(formatBytesSize(1_572_864), '1.50 MB');
+    assert.equal(getOfflineDownloadUrl(), '/compound-naming-guide.html');
+    assert.equal(getEffectiveUpdateUrl(), '/version.json');
   });
 });

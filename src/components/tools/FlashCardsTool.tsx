@@ -91,21 +91,21 @@ export const FlashCardsTool: React.FC = () => {
       {/* Header Banner */}
       <div
         data-guide-id="tool-header"
-        className="p-5 sm:p-6 rounded-2xl bg-gradient-to-r from-purple-500/10 via-pink-500/10 to-indigo-500/10 border border-purple-500/20 flex flex-wrap items-center justify-between gap-4"
+        className="p-5 sm:p-6 rounded-2xl bg-gradient-to-br from-[#ebf6ff] via-[#dff1ff] to-[#d8edff] border border-sky-300 shadow-[0_6px_22px_-6px_rgba(18,54,90,0.09)] flex flex-wrap items-center justify-between gap-4"
       >
         <div>
-          <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
-            <Layers className="w-5 h-5 text-purple-500" />
+          <h2 className="font-display text-2xl font-bold text-[#12365a] flex items-center gap-2">
+            <Layers className="w-5 h-5 text-[#0284c7]" />
             <span>Prefix &amp; Ending Flip Cards</span>
           </h2>
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+          <p className="mt-1 text-sm text-[#1e4b7a]">
             Review Greek prefixes, Latin metal stems, and acid endings.
           </p>
         </div>
         <button
           type="button"
           onClick={() => startTour('flashcards')}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition cursor-pointer shadow-xs shrink-0"
+          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#0284c7] to-[#2563eb] hover:from-[#0369a1] hover:to-[#1d4ed8] text-[#eff8ff] text-xs font-bold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md cursor-pointer shadow-xs shrink-0"
         >
           <Compass className="w-3.5 h-3.5" />
           <span>Guided Tour</span>
@@ -130,8 +130,8 @@ export const FlashCardsTool: React.FC = () => {
             }}
             className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
               selectedCategory === tab.id
-                ? 'bg-purple-600 text-white shadow-sm'
-                : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
+                ? 'bg-[#0284c7] text-[#eff8ff] shadow-sm'
+                : 'bg-[#ebf6ff] text-[#12365a] border border-sky-300 hover:bg-[#d8edff]'
             }`}
           >
             {tab.label}
@@ -144,7 +144,7 @@ export const FlashCardsTool: React.FC = () => {
         <div data-guide-id="tool-workspace" className="space-y-4">
           <div
             onClick={() => setIsFlipped(!isFlipped)}
-            className="w-full min-h-[260px] p-8 rounded-3xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-700 hover:border-purple-500 dark:hover:border-purple-500 shadow-xl cursor-pointer transition-all duration-200 flex flex-col items-center justify-center text-center relative select-none"
+            className="w-full min-h-[260px] p-8 rounded-3xl bg-[#ebf6ff] border-2 border-sky-300 hover:border-[#0284c7] shadow-[0_12px_32px_-10px_rgba(18,54,90,0.12)] cursor-pointer transition-all duration-200 flex flex-col items-center justify-center text-center relative select-none"
             role="button"
             tabIndex={0}
             onKeyDown={(e) => {
@@ -156,11 +156,11 @@ export const FlashCardsTool: React.FC = () => {
             aria-label="Click to flip card"
           >
             {/* Top Bar on Card */}
-            <div className="absolute top-4 left-4 right-4 flex items-center justify-between text-xs text-slate-400">
+            <div className="absolute top-4 left-4 right-4 flex items-center justify-between text-xs text-[#1e4b7a]">
               <span className="font-mono">
                 Card {currentIndex + 1} of {filteredCards.length}
               </span>
-              <span className="flex items-center gap-1 text-purple-600 dark:text-purple-400 font-semibold">
+              <span className="flex items-center gap-1 text-[#0284c7] font-semibold">
                 <RotateCw className="w-3.5 h-3.5" />
                 Tap to Flip
               </span>
@@ -169,11 +169,11 @@ export const FlashCardsTool: React.FC = () => {
             {/* Front of Card */}
             {!isFlipped ? (
               <div className="space-y-2 animate-in fade-in duration-150">
-                <span className="text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+                <span className="font-display text-4xl font-bold text-[#12365a] tracking-tight">
                   {activeCard.front}
                 </span>
                 {activeCard.frontSub && (
-                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+                  <p className="text-sm font-medium text-[#1e4b7a]">
                     {activeCard.frontSub}
                   </p>
                 )}
@@ -181,11 +181,11 @@ export const FlashCardsTool: React.FC = () => {
             ) : (
               /* Back of Card */
               <div className="space-y-3 animate-in fade-in duration-150">
-                <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 whitespace-pre-line font-mono">
+                <div className="text-2xl font-bold text-[#0284c7] whitespace-pre-line font-mono">
                   {activeCard.back}
                 </div>
                 {activeCard.backDetail && (
-                  <p className="text-xs text-slate-600 dark:text-slate-300 max-w-md mx-auto leading-relaxed">
+                  <p className="text-xs text-[#1e4b7a] max-w-md mx-auto leading-relaxed">
                     {activeCard.backDetail}
                   </p>
                 )}
@@ -195,7 +195,7 @@ export const FlashCardsTool: React.FC = () => {
             {/* Mastered Badge in Bottom Left */}
             <div className="absolute bottom-4 left-4">
               {masteredIds.has(activeCard.id) && (
-                <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-800">
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full border border-emerald-300">
                   <Check className="w-3 h-3" /> Mastered
                 </span>
               )}
@@ -206,7 +206,7 @@ export const FlashCardsTool: React.FC = () => {
           <div className="flex items-center justify-between gap-2">
             <button
               onClick={handlePrev}
-              className="p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer shadow-xs"
+              className="p-3 rounded-xl bg-[#ebf6ff] border border-sky-300 text-[#12365a] hover:bg-[#d8edff] transition cursor-pointer shadow-xs"
               aria-label="Previous card"
             >
               <ChevronLeft className="w-5 h-5" />
@@ -217,8 +217,8 @@ export const FlashCardsTool: React.FC = () => {
                 onClick={() => toggleMastered(activeCard.id)}
                 className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer border ${
                   masteredIds.has(activeCard.id)
-                    ? 'bg-emerald-600 text-white border-emerald-600'
-                    : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
+                    ? 'bg-emerald-600 text-[#eff8ff] border-emerald-600 shadow-sm'
+                    : 'bg-[#d8edff] text-[#12365a] border-sky-300 hover:bg-[#c5e3fc]'
                 }`}
               >
                 {masteredIds.has(activeCard.id) ? '✓ Mastered' : 'Mark as Mastered'}
@@ -226,17 +226,17 @@ export const FlashCardsTool: React.FC = () => {
 
               <button
                 onClick={handleShuffle}
-                className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer"
+                className="p-2.5 rounded-xl bg-[#ebf6ff] border border-sky-300 text-[#12365a] hover:bg-[#d8edff] transition cursor-pointer"
                 title="Shuffle Cards"
                 aria-label="Shuffle cards"
               >
-                <Shuffle className="w-4 h-4 text-purple-500" />
+                <Shuffle className="w-4 h-4 text-[#0284c7]" />
               </button>
             </div>
 
             <button
               onClick={handleNext}
-              className="p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer shadow-xs"
+              className="p-3 rounded-xl bg-[#ebf6ff] border border-sky-300 text-[#12365a] hover:bg-[#d8edff] transition cursor-pointer shadow-xs"
               aria-label="Next card"
             >
               <ChevronRight className="w-5 h-5" />

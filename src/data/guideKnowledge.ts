@@ -469,9 +469,9 @@ export function getTourSteps(tourId: TourId, currentLibraryId: string): TourStep
       return [
         {
           id: 'pr-1',
-          title: 'Practice Sets & Mastery Unlocks',
+          title: 'Practice Topics & Mastery Unlocks',
           speechText:
-            'Practice sets follow the 8 rule libraries in sequence. You can try any unlocked set freely in Guest Mode anytime.',
+            'Practice covers five progressive topics from Ionic Compounds to Mixed Practice. Topic 1 is always open for guest practice.',
           highlightTarget: 'practice-header',
           targetTab: 'practice',
         },
@@ -479,7 +479,7 @@ export function getTourSteps(tourId: TourId, currentLibraryId: string): TourStep
           id: 'pr-2',
           title: 'How Unlocking Works',
           speechText:
-            'To unlock the next topic, sign in, submit a passing score, and come back tomorrow on the next calendar day.',
+            'Sign in with Google, wait for your teacher to approve your account, score at least 75 percent, and come back on the next day after midnight to unlock the next topic.',
           highlightTarget: 'practice-sets',
           targetTab: 'practice',
         },
@@ -497,16 +497,16 @@ export function getTourSteps(tourId: TourId, currentLibraryId: string): TourStep
       return [
         {
           id: 'si-1',
-          title: 'Signing In & Submitting Scores',
+          title: 'Signing In & Teacher Approval',
           speechText:
-            'Sign in with your username and PIN when you are ready to submit scores or restore your progress on another device.',
+            'Sign in with your Google account or continue as a guest. After first sign-in, enter your name and section so your teacher can approve your account and unlock monitored topics.',
           highlightTarget: 'header-signin',
         },
         {
           id: 'si-2',
-          title: 'Offline Score Safety',
+          title: 'Monitored Score Saving',
           speechText:
-            'If you finish a practice offline, your attempt is saved safely as Pending on this device and sends automatically without duplicates when you reconnect.',
+            'Approved students save every score automatically to their class record. If you finish while offline, your attempt is queued locally until connection returns.',
           highlightTarget: 'practice-signin',
           targetTab: 'practice',
         },
@@ -519,15 +519,15 @@ export function getTourSteps(tourId: TourId, currentLibraryId: string): TourStep
           id: 'st-1',
           title: 'Customize Appearance & Learning',
           speechText:
-            'In Settings, adjust themes, font size, real chemical subscripts, practice hints, and your virtual guide preferences.',
+            'In Settings, adjust font size, real chemical subscripts, practice hints, and your virtual guide preferences.',
           highlightTarget: 'settings-guide',
         },
         {
           id: 'st-2',
-          title: 'Guide Calibration & Offline Sharing',
+          title: 'Guide Calibration & Offline Copy',
           speechText:
-            'Use Calibrate Guide to align mouth and eye animation, check your class score connection, or review offline copy updates.',
-          highlightTarget: 'settings-sheets',
+            'Use Calibrate Guide to align mouth and eye animation, open the Teacher Login when needed, or download the single-file offline copy.',
+          highlightTarget: 'settings-guide',
         },
       ];
   }

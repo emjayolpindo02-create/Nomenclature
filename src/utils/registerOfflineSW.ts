@@ -1,5 +1,6 @@
 import { registerSW } from 'virtual:pwa-register';
 import { isOfflineFileCopy } from '../config/appInfo';
+import { setPwaOfflineReady, setPwaUpdateAvailable } from './pwaStatus';
 
 let warmupStarted = false;
 
@@ -69,6 +70,10 @@ async function warmDevRuntimeCache(basePath: string): Promise<void> {
         )
       );
     }
+
+    if (navigator.serviceWorker.controller) {
+      setPwaOfflineReady(true);
+    }
   } catch {
     // Ignore dev cache warmup errors
   }
@@ -80,6 +85,17 @@ export function registerOfflineServiceWorker(): void {
   if (!('serviceWorker' in navigator)) return;
 
   const basePath = getNormalizedBasePath();
+
+  if (navigator.serviceWorker.controller) {
+    setPwaOfflineReady(true);
+  }
+  void navigator.serviceWorker.ready
+    .then((reg) => {
+      if (reg?.active) {
+        setPwaOfflineReady(true);
+      }
+    })
+    .catch(() => undefined);
 
   if (import.meta.env.DEV) {
     const devSwUrl = `${basePath}dev-sw.js?dev-sw`;
@@ -104,9 +120,18 @@ export function registerOfflineServiceWorker(): void {
     return;
   }
 
-  registerSW({
+  const updateSW = registerSW({
     immediate: true,
+    onOfflineReady() {
+      setPwaOfflineReady(true);
+    },
+    onNeedRefresh() {
+      setPwaUpdateAvailable(true, () => updateSW(true));
+    },
     onRegisteredSW(_swScriptUrl, registration) {
+      if (registration?.active) {
+        setPwaOfflineReady(true);
+      }
       if (registration && typeof registration.update === 'function') {
         window.addEventListener('online', () => {
           void registration.update().catch(() => undefined);
@@ -117,6 +142,11 @@ export function registerOfflineServiceWorker(): void {
       // Fallback direct registration if virtual:pwa-register encounters any issue
       navigator.serviceWorker
         .register(`${basePath}sw.js`, { scope: basePath })
+        .then((reg) => {
+          if (reg.active) {
+            setPwaOfflineReady(true);
+          }
+        })
         .catch(() => undefined);
     },
   });

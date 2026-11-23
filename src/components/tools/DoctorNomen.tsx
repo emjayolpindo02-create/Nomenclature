@@ -14,7 +14,6 @@ import { ChemicalElement, NamingResult } from '../../types/chemistry';
 import { LIBRARY_RULES } from '../../data/libraryRules';
 import { solveCompound } from '../../engine/namingEngine';
 import { answerLocallyWithNomenGuide } from '../../engine/nomenGuide';
-import { useProgress } from '../../context/ProgressContext';
 import { isOfflineFileCopy } from '../../config/appInfo';
 import { FormulaRenderer } from '../common/FormulaRenderer';
 import { ColorCodedToken, ColorLegend } from '../common/ColorCodedToken';
@@ -92,8 +91,6 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
   onNavigateToLibrary,
   onSelectElement,
 }) => {
-  const { isLibraryUnlocked } = useProgress();
-
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
   const [input, setInput] = useState('');
   const [isAsking, setIsAsking] = useState(false);
@@ -599,7 +596,7 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
       />
 
       {/* Speak or Type Input Card */}
-      <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+      <div className="p-4 sm:p-5 rounded-2xl bg-[#ffffff] border border-[#dbe9f4] shadow-sm space-y-3">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -611,10 +608,10 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
             type="button"
             onClick={isRecording ? stopVoiceInput : startVoiceInput}
             disabled={isTranscribing || isAsking}
-            className={`px-4 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer shrink-0 disabled:opacity-50 ${
+            className={`px-4 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all duration-200 cursor-pointer shrink-0 disabled:opacity-50 ${
               isRecording
                 ? 'bg-rose-600 hover:bg-rose-700 text-white animate-pulse'
-                : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                : 'bg-[#f4f9fe] hover:bg-[#eaf3fc] text-[#1f3a56] border border-[#dbe9f4]'
             }`}
             aria-label={isRecording ? 'Stop speaking and send' : 'Speak a question to Doctor Nomen'}
           >
@@ -630,7 +627,7 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
               </>
             ) : (
               <>
-                <Mic className="w-4 h-4" />
+                <Mic className="w-4 h-4 text-[#0284c7]" />
                 <span>Speak</span>
               </>
             )}
@@ -643,13 +640,13 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
             placeholder="Ask Doctor Nomen anything about formulas, ionic names, prefixes, or acids..."
             disabled={isRecording || isTranscribing}
             aria-label="Ask Doctor Nomen a question"
-            className="flex-1 px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+            className="flex-1 px-4 py-3 rounded-xl bg-[#f4f9fe] border border-[#dbe9f4] text-[#1f3a56] placeholder:text-[#526d88]/70 text-sm focus:outline-none focus:ring-2 focus:ring-[#0284c7]"
           />
 
           <button
             type="submit"
             disabled={!input.trim() || isAsking || isRecording || isTranscribing}
-            className="px-5 py-3 rounded-xl bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer shrink-0 disabled:cursor-not-allowed"
+            className="px-5 py-3 rounded-xl bg-[#0284c7] hover:bg-[#0369a1] disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md cursor-pointer shrink-0 disabled:cursor-not-allowed disabled:transform-none"
           >
             {isAsking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             <span>Ask</span>
@@ -657,7 +654,7 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
         </form>
 
         {statusNotice && (
-          <p className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 px-3 py-2 rounded-xl">
+          <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 px-3 py-2 rounded-xl">
             {statusNotice}
           </p>
         )}
@@ -670,7 +667,7 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
               type="button"
               disabled={isAsking || isRecording || isTranscribing}
               onClick={() => void askDoctorNomen(q)}
-              className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-sky-50 dark:hover:bg-sky-950/40 hover:text-sky-700 dark:hover:text-sky-300 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 transition cursor-pointer text-left"
+              className="px-3 py-1.5 rounded-xl bg-[#f4f9fe] hover:bg-[#eaf3fc] hover:text-[#0284c7] border border-[#dbe9f4] text-xs font-medium text-[#1f3a56] transition cursor-pointer text-left"
             >
               {q}
             </button>
@@ -684,7 +681,7 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
           if (msg.role === 'user') {
             return (
               <div key={msg.id} className="flex justify-end">
-                <div className="max-w-[85%] px-4 py-3 rounded-2xl bg-sky-600 text-white text-sm font-medium shadow-xs">
+                <div className="max-w-[85%] px-4 py-3 rounded-2xl bg-[#0284c7] text-white text-sm font-medium shadow-sm">
                   {msg.text}
                 </div>
               </div>
@@ -694,19 +691,18 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
           const matchedRule = msg.libraryId
             ? LIBRARY_RULES.find((r) => r.id === msg.libraryId)
             : undefined;
-          const unlocked = matchedRule ? isLibraryUnlocked(matchedRule.id) : false;
           const isSpeaking = speakingMessageId === msg.id;
 
           return (
             <div
               key={msg.id}
-              className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4"
+              className="p-5 rounded-2xl bg-[#ffffff] border border-[#dbe9f4] shadow-sm space-y-4"
             >
               {/* Top Row: Doctor Nomen label + Listen Button */}
               <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-xs font-bold text-sky-600 dark:text-sky-400">
-                  <span className="w-6 h-6 rounded-lg bg-sky-500/15 border border-sky-500/30 flex items-center justify-center">
-                    <FlaskConical className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                <div className="flex items-center gap-2 text-xs font-bold text-[#0284c7]">
+                  <span className="w-6 h-6 rounded-lg bg-[#f4f9fe] border border-[#dbe9f4] flex items-center justify-center">
+                    <FlaskConical className="w-3.5 h-3.5 text-[#0284c7]" />
                   </span>
                   <span>Doctor Nomen</span>
                 </div>
@@ -714,10 +710,10 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
                 <button
                   type="button"
                   onClick={() => void speakMessage(msg.id, msg.text)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer ${
                     isSpeaking
-                      ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40'
-                      : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
+                      ? 'bg-amber-50 text-amber-900 border-amber-200'
+                      : 'bg-[#ffffff] text-[#1f3a56] border-[#dbe9f4] hover:bg-[#f4f9fe]'
                   }`}
                   aria-label={isSpeaking ? 'Stop speaking' : 'Listen to Doctor Nomen'}
                 >
@@ -728,7 +724,7 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
                     </>
                   ) : (
                     <>
-                      <Volume2 className="w-3.5 h-3.5" />
+                      <Volume2 className="w-3.5 h-3.5 text-[#0284c7]" />
                       <span>Listen</span>
                     </>
                   )}
@@ -736,13 +732,13 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
               </div>
 
               {/* Answer Text */}
-              <p className="text-sm sm:text-base text-slate-800 dark:text-slate-100 leading-relaxed">
+              <p className="text-sm sm:text-base text-[#1f3a56] leading-relaxed">
                 {msg.text}
               </p>
 
               {/* Compound Breakdown Card if Formula Detected */}
               {(msg.formula || msg.solved) && (
-                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
+                <div className="p-4 rounded-xl bg-[#f4f9fe] border border-[#dbe9f4] space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-4">
                     <FormulaRenderer
                       formula={msg.solved?.formula || msg.formula || ''}
@@ -753,14 +749,14 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
                       <div className="space-y-0.5">
                         <ColorCodedToken parts={msg.solved.parts} size="md" />
                         {msg.solved.traditionalName && (
-                          <span className="block text-xs font-serif italic text-amber-600 dark:text-amber-400">
+                          <span className="block text-xs font-serif italic text-amber-800">
                             Traditional: {msg.solved.traditionalName}
                           </span>
                         )}
                       </div>
                     ) : (
                       msg.compoundName && (
-                        <span className="text-sm font-bold text-slate-900 dark:text-white">
+                        <span className="text-sm font-bold text-[#1f3a56]">
                           {msg.compoundName}
                         </span>
                       )
@@ -777,13 +773,10 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
                     <button
                       type="button"
                       onClick={() => onNavigateToLibrary(matchedRule.id)}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition cursor-pointer"
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#0284c7] hover:bg-[#0369a1] text-white text-xs font-bold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md cursor-pointer"
                     >
-                      {unlocked ? <BookOpen className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-                      <span>
-                        Open {matchedRule.title}
-                        {!unlocked ? ' (Locked)' : ''}
-                      </span>
+                      <BookOpen className="w-3.5 h-3.5" />
+                      <span>Open {matchedRule.title}</span>
                     </button>
                   )}
 
@@ -792,9 +785,9 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
                       type="button"
                       disabled={isAsking}
                       onClick={() => void askDoctorNomen(msg.followUpSuggestion!)}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-medium transition cursor-pointer text-left"
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#f4f9fe] hover:bg-[#eaf3fc] border border-[#dbe9f4] text-[#1f3a56] text-xs font-medium transition cursor-pointer text-left"
                     >
-                      <MessageSquare className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                      <MessageSquare className="w-3.5 h-3.5 text-[#0284c7] shrink-0" />
                       <span>{msg.followUpSuggestion}</span>
                     </button>
                   )}
@@ -805,8 +798,8 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
         })}
 
         {isAsking && (
-          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center gap-2.5 text-sm text-slate-600 dark:text-slate-300">
-            <Loader2 className="w-4 h-4 animate-spin text-sky-500" />
+          <div className="p-4 rounded-2xl bg-[#ffffff] border border-[#dbe9f4] flex items-center gap-2.5 text-sm text-[#1f3a56] shadow-xs">
+            <Loader2 className="w-4 h-4 animate-spin text-[#0284c7]" />
             <span>Doctor Nomen is thinking...</span>
           </div>
         )}

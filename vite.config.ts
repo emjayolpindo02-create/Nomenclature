@@ -85,6 +85,9 @@ export default defineConfig(() => {
       __APP_VERSION__: JSON.stringify(process.env.VITE_APP_VERSION || appVersion),
       __APP_BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10)),
       __APP_IS_SINGLE_FILE__: JSON.stringify(isSingleFile),
+      __SINGLE_FILE_SIZE_BYTES__: JSON.stringify(
+        Number(process.env.SINGLE_FILE_SIZE_BYTES || 0) || 0
+      ),
     },
     build: isSingleFile
       ? {
@@ -111,15 +114,15 @@ export default defineConfig(() => {
           ]
         : [
             VitePWA({
-              registerType: 'autoUpdate',
+              registerType: 'prompt',
               injectRegister: 'auto',
               manifest: {
                 id: basePath,
                 name: 'I-LAB',
                 short_name: 'I-LAB',
                 description: 'I-LAB: Master naming, reading, and writing chemical compounds.',
-                theme_color: '#0f172a',
-                background_color: '#0f172a',
+                theme_color: '#dff1ff',
+                background_color: '#dff1ff',
                 display: 'standalone',
                 start_url: basePath,
                 scope: basePath,
@@ -146,12 +149,12 @@ export default defineConfig(() => {
               },
               workbox: {
                 globPatterns: ['**/*.{js,css,html,ico,png,jpg,svg,woff,woff2,webmanifest}'],
+                globIgnores: ['**/compound-naming-guide.html', '**/*.pdf'],
                 maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-                skipWaiting: true,
                 clientsClaim: true,
                 cleanupOutdatedCaches: true,
                 navigateFallback: 'index.html',
-                navigateFallbackDenylist: [/^\/api\//],
+                navigateFallbackDenylist: [/^\/api\//, /compound-naming-guide\.html$/i],
                 runtimeCaching: [
                   {
                     urlPattern: ({ url, sameOrigin, request }) =>
@@ -159,7 +162,8 @@ export default defineConfig(() => {
                       request.method === 'GET' &&
                       !url.pathname.startsWith('/api/') &&
                       !url.pathname.endsWith('/sw.js') &&
-                      !url.pathname.endsWith('/dev-sw.js'),
+                      !url.pathname.endsWith('/dev-sw.js') &&
+                      !url.pathname.endsWith('/compound-naming-guide.html'),
                     handler: 'NetworkFirst',
                     options: {
                       cacheName: 'ilab-offline-runtime-v1',

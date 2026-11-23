@@ -453,6 +453,46 @@ async function startServer() {
       });
     }
 
+    app.get('/compound-naming-guide.html', (_req, res) => {
+      const candidates = [
+        path.resolve(__dirname, 'dist-single', 'compound-naming-guide.html'),
+        path.resolve(__dirname, 'dist', 'compound-naming-guide.html'),
+      ];
+      const existing = candidates.find((p) => fs.existsSync(p));
+      if (existing) {
+        res.setHeader('Cache-Control', 'no-cache');
+        res.sendFile(existing);
+        return;
+      }
+      res.status(404).send('Single-file build not generated yet. Run npm run build:single.');
+    });
+
+    app.get('/version.json', (_req, res) => {
+      const distManifest = path.resolve(__dirname, 'dist', 'version.json');
+      if (fs.existsSync(distManifest)) {
+        res.setHeader('Cache-Control', 'no-cache');
+        res.sendFile(distManifest);
+        return;
+      }
+      let version = '1.0.0';
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8')) as {
+          version?: string;
+        };
+        if (pkg.version && pkg.version !== '0.0.0') version = pkg.version;
+      } catch {
+        // ignore
+      }
+      const singlePath = path.resolve(__dirname, 'dist-single', 'compound-naming-guide.html');
+      const sizeBytes = fs.existsSync(singlePath) ? fs.statSync(singlePath).size : 0;
+      res.json({
+        version,
+        buildDate: new Date().toISOString().slice(0, 10),
+        downloadUrl: '/compound-naming-guide.html',
+        sizeBytes,
+      });
+    });
+
     app.use(vite.middlewares);
   } else {
     const distDir = path.resolve(__dirname, 'dist');

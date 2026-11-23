@@ -1,5 +1,3 @@
-import { cleanEnvValue } from './sheets';
-
 const viteEnv: Record<string, unknown> =
   typeof import.meta !== 'undefined' &&
   typeof import.meta.env === 'object' &&
@@ -7,12 +5,17 @@ const viteEnv: Record<string, unknown> =
     ? (import.meta.env as Record<string, unknown>)
     : {};
 
-/**
- * Single configurable link for checking and downloading newer releases of the app.
- * Point this to a JSON manifest ({ "version": "1.1.0", "downloadUrl": "https://..." })
- * or set VITE_UPDATE_URL at build time.
- */
-export const APP_UPDATE_URL = cleanEnvValue(viteEnv.VITE_UPDATE_URL) || '';
+export function cleanEnvValue(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
 
 export const APP_VERSION =
   typeof __APP_VERSION__ !== 'undefined' && __APP_VERSION__
@@ -22,10 +25,40 @@ export const APP_VERSION =
 export const APP_BUILD_DATE =
   typeof __APP_BUILD_DATE__ !== 'undefined' && __APP_BUILD_DATE__
     ? __APP_BUILD_DATE__
-    : '2026-11-18';
+    : '2026-11-23';
 
 export const IS_SINGLE_FILE_BUILD =
   typeof __APP_IS_SINGLE_FILE__ !== 'undefined' ? Boolean(__APP_IS_SINGLE_FILE__) : false;
+
+export const SINGLE_FILE_SIZE_BYTES =
+  typeof __SINGLE_FILE_SIZE_BYTES__ !== 'undefined' && Number.isFinite(__SINGLE_FILE_SIZE_BYTES__)
+    ? Number(__SINGLE_FILE_SIZE_BYTES__)
+    : 0;
+
+export function formatBytesSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '~1.1 MB';
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(0)} KB`;
+  return `${(kb / 1024).toFixed(2)} MB`;
+}
+
+export function getNormalizedViteBase(): string {
+  const raw = typeof viteEnv.BASE_URL === 'string' && viteEnv.BASE_URL ? viteEnv.BASE_URL : '/';
+  if (raw === './') return './';
+  return raw.endsWith('/') ? raw : `${raw}/`;
+}
+
+export function getOfflineDownloadUrl(): string {
+  const base = getNormalizedViteBase();
+  return base === './' ? './compound-naming-guide.html' : `${base}compound-naming-guide.html`;
+}
+
+export function getEffectiveUpdateUrl(): string {
+  if (isOfflineFileCopy()) return '';
+  const base = getNormalizedViteBase();
+  return base === './' ? './version.json' : `${base}version.json`;
+}
 
 export function isFileProtocol(loc?: { protocol?: string }): boolean {
   const target = loc ?? (typeof window !== 'undefined' ? window.location : undefined);
@@ -69,7 +102,7 @@ export interface UpdateCheckResult {
 }
 
 export async function checkForAppUpdate(
-  updateUrl: string = APP_UPDATE_URL,
+  updateUrl: string = getEffectiveUpdateUrl(),
   currentVersion: string = APP_VERSION
 ): Promise<UpdateCheckResult> {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -85,8 +118,7 @@ export async function checkForAppUpdate(
     return {
       status: 'unconfigured',
       currentVersion,
-      message:
-        'No update link configured for this copy yet (set APP_UPDATE_URL in src/config/appInfo.ts or VITE_UPDATE_URL).',
+      message: 'This offline file runs independently without update endpoints.',
     };
   }
 
