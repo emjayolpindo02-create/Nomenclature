@@ -301,7 +301,7 @@ export const DoctorNomen: React.FC<DoctorNomenProps> = ({
       const res = await fetch('/api/nomen/speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: spokenText }),
+        body: JSON.stringify({ text: spokenText, voiceProfile: 'hype-announcer' }),
       });
 
       if (reqId !== playbackRequestIdRef.current) return;

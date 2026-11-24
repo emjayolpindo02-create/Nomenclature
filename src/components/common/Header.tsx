@@ -9,10 +9,10 @@ import {
   LogOut,
   ShieldCheck,
   AlertCircle,
-  CheckCircle2,
-  WifiOff,
   X,
-  KeyRound,
+  Home,
+  GraduationCap,
+  Clock,
   RefreshCw,
 } from 'lucide-react';
 import { useProgress } from '../../context/ProgressContext';
@@ -27,120 +27,124 @@ import {
 interface HeaderProps {
   onOpenSettings: () => void;
   onNavigateHome: () => void;
+  onNavigateTeacher: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onNavigateHome }) => {
+export const Header: React.FC<HeaderProps> = ({
+  onOpenSettings,
+  onNavigateHome,
+  onNavigateTeacher,
+}) => {
+  const { badges, queuedCompletions } = useProgress();
   const {
-    badges,
-    queuedAttempts,
-    isSyncingQueue,
-    syncStatus,
-    manualSyncNow,
-    clearSyncStatus,
-  } = useProgress();
-  const { user, authError, openSignInModal, signOut, clearAuthError } = useAuth();
+    firebaseUser,
+    studentProfile,
+    isTeacher,
+    authError,
+    openSignInModal,
+    signOut,
+    clearAuthError,
+  } = useAuth();
   const { updateAvailable } = usePwaStatus();
   const offlineCopy = isOfflineFileCopy();
   const unlockedBadgesCount = badges.filter((b) => b.unlocked).length;
-  const hasPendingQueue = Boolean(user && queuedAttempts.length > 0);
-  const isOnlineNow = typeof navigator === 'undefined' ? true : navigator.onLine !== false;
+
+  const userDisplayLabel = isTeacher
+    ? `Teacher: ${firebaseUser?.displayName || firebaseUser?.email || 'Verified'}`
+    : studentProfile
+      ? `${studentProfile.displayName} (${studentProfile.section})`
+      : firebaseUser?.isAnonymous
+        ? 'Guest'
+        : firebaseUser?.displayName || firebaseUser?.email || 'Student';
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-slate-200/80 dark:border-slate-800/80 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md transition-colors">
+    <header className="sticky top-0 z-40 w-full border-b border-[#dbe9f4] bg-[#ffffff]/95 backdrop-blur-md shadow-[0_2px_12px_-4px_rgba(31,58,86,0.08)]">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-3">
-        {/* Brand Title: I-LAB */}
-        <button
-          onClick={onNavigateHome}
-          className="flex items-center gap-2 sm:gap-2.5 text-left group cursor-pointer focus:outline-none min-w-0"
-          aria-label="Go to I-LAB home"
-        >
-          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-sky-500/20 group-hover:scale-105 transition-transform shrink-0">
-            <Atom className="w-5 h-5 sm:w-6 sm:h-6 animate-spin-slow" />
-          </div>
-          <div className="min-w-0">
-            <span className="text-lg font-black tracking-tight text-slate-900 dark:text-white block leading-none">
-              I-LAB
-            </span>
-          </div>
-        </button>
-
-        {/* Right Action Icons: Offline, Manual Sync, PWA Install, Badges, Account, Settings */}
-        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-          <OfflineIndicator />
-
+        {/* Brand Title + Home */}
+        <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
-            onClick={() => void manualSyncNow()}
-            disabled={isSyncingQueue}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition cursor-pointer whitespace-nowrap disabled:opacity-70 disabled:cursor-wait ${
-              hasPendingQueue
-                ? 'bg-amber-500/15 border-amber-500/35 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25'
-                : 'bg-sky-500/10 border-sky-500/30 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20'
-            }`}
-            aria-label={
-              hasPendingQueue
-                ? `Sync ${queuedAttempts.length} pending score${queuedAttempts.length === 1 ? '' : 's'} with Google Sheets`
-                : 'Sync local progress with Google Sheets'
-            }
-            title={
-              hasPendingQueue
-                ? `Check connection and sync ${queuedAttempts.length} pending score(s) with Google Sheets`
-                : 'Check online status and sync local data with Google Sheets'
-            }
+            onClick={onNavigateHome}
+            className="flex items-center gap-2 sm:gap-2.5 text-left group cursor-pointer focus:outline-none shrink-0"
+            aria-label="Go to I-LAB start screen"
           >
-            <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${isSyncingQueue ? 'animate-spin' : ''}`} />
-            <span>
-              {isSyncingQueue
-                ? 'Syncing...'
-                : hasPendingQueue
-                ? `Sync (${queuedAttempts.length})`
-                : 'Sync'}
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-[#0284c7] to-[#2563eb] flex items-center justify-center text-white shadow-md shadow-sky-500/20 group-hover:scale-105 transition-transform shrink-0">
+              <Atom className="w-5 h-5 sm:w-6 sm:h-6 animate-spin-slow" />
+            </div>
+            <span className="font-display text-lg font-bold tracking-tight text-[#1f3a56] block leading-none whitespace-nowrap">
+              I-LAB
             </span>
           </button>
 
+          <button
+            type="button"
+            onClick={onNavigateHome}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#f4f9fe] hover:bg-[#e8f3fd] border border-[#dbe9f4] text-[#1f3a56] text-xs font-bold transition cursor-pointer whitespace-nowrap"
+            aria-label="Return to Start Screen"
+            title="Start Screen"
+          >
+            <Home className="w-3.5 h-3.5 text-[#0284c7]" />
+            <span className="hidden sm:inline">Home</span>
+          </button>
+        </div>
+
+        {/* Right Action Controls */}
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+          <OfflineIndicator />
           <PWAInstallButton />
 
           {/* Badges counter */}
           <div
-            className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 whitespace-nowrap"
+            className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#f4f9fe] text-xs font-semibold text-[#1f3a56] border border-[#dbe9f4] whitespace-nowrap"
             title={`${unlockedBadgesCount} of ${badges.length} badges unlocked`}
           >
-            <Award className="w-3.5 h-3.5 text-amber-500" />
+            <Award className="w-3.5 h-3.5 text-amber-600" />
             <span>
               {unlockedBadgesCount} / {badges.length}
             </span>
           </div>
 
-          {/* Student Session Control */}
-          {user ? (
+          {isTeacher && (
+            <button
+              type="button"
+              onClick={onNavigateTeacher}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#0284c7] hover:bg-[#0369a1] text-white text-xs font-bold shadow-xs transition cursor-pointer whitespace-nowrap"
+            >
+              <GraduationCap className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Teacher</span>
+            </button>
+          )}
+
+          {/* Account Pill */}
+          {firebaseUser ? (
             <div
               data-guide-id="header-signin"
-              className="flex items-center gap-1 pl-2 pr-1 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30"
+              className={`flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-xl border ${
+                studentProfile && !studentProfile.approved && !isTeacher
+                  ? 'bg-amber-50 border-amber-200'
+                  : 'bg-[#f4f9fe] border-[#dbe9f4]'
+              }`}
             >
-              <ShieldCheck
-                className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"
-                aria-hidden="true"
-              />
+              {studentProfile && !studentProfile.approved && !isTeacher ? (
+                <Clock className="w-3.5 h-3.5 text-amber-700 shrink-0" aria-hidden="true" />
+              ) : (
+                <ShieldCheck className="w-3.5 h-3.5 text-[#0284c7] shrink-0" aria-hidden="true" />
+              )}
               <span
-                className="hidden sm:inline text-xs font-semibold text-emerald-800 dark:text-emerald-200 max-w-[140px] truncate whitespace-nowrap"
-                title={`Signed in as ${user.fullName} (${user.username})`}
+                className="hidden sm:inline text-xs font-bold text-[#1f3a56] max-w-[150px] truncate whitespace-nowrap"
+                title={userDisplayLabel}
               >
-                {user.fullName || user.username}
+                {userDisplayLabel}
               </span>
-              <button
-                type="button"
-                onClick={() => openSignInModal({ mode: 'change-pin' })}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white/80 dark:bg-slate-800 hover:bg-sky-50 dark:hover:bg-sky-950/50 text-slate-700 dark:text-slate-200 hover:text-sky-600 text-[11px] font-bold transition cursor-pointer"
-                aria-label="Change your PIN"
-                title="Change PIN"
-              >
-                <KeyRound className="w-3 h-3" />
-                <span className="hidden lg:inline">PIN</span>
-              </button>
+              {queuedCompletions.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-900 text-[10px] font-bold">
+                  {queuedCompletions.length} queued
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => void signOut()}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white/80 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-slate-700 dark:text-slate-200 hover:text-rose-600 dark:hover:text-rose-400 text-[11px] font-bold transition cursor-pointer"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[#ffffff] hover:bg-rose-50 text-[#1f3a56] hover:text-rose-800 border border-[#dbe9f4] text-[11px] font-bold transition cursor-pointer"
                 aria-label="Sign out"
                 title="Sign Out"
               >
@@ -152,25 +156,20 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onNavigateHome }
             <button
               type="button"
               data-guide-id="header-signin"
-              onClick={() =>
-                openSignInModal({
-                  reason:
-                    'Optional: Sign in with your username and PIN to restore progress or submit scores.',
-                })
-              }
-              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm transition cursor-pointer whitespace-nowrap"
-              aria-label="Sign in with username and PIN"
+              onClick={() => openSignInModal({ mode: 'student' })}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#0284c7] to-[#2563eb] hover:from-[#0369a1] hover:to-[#1d4ed8] text-white text-xs font-bold shadow-sm transition cursor-pointer whitespace-nowrap"
+              aria-label="Sign in"
             >
               <LogIn className="w-3.5 h-3.5 shrink-0" />
               <span>Sign In</span>
             </button>
           )}
 
-          {/* Settings Trigger Button */}
+          {/* Settings Button */}
           <button
             type="button"
             onClick={onOpenSettings}
-            className="p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+            className="p-2 rounded-xl text-[#1f3a56] hover:text-[#0284c7] bg-[#f4f9fe] hover:bg-[#e8f3fd] border border-[#dbe9f4] transition cursor-pointer"
             aria-label="Open customization settings"
             title="Settings & Appearance"
           >
@@ -179,11 +178,11 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onNavigateHome }
         </div>
       </div>
 
-      {/* Update Available Banner (Hosted PWA) */}
+      {/* PWA Update Available Banner */}
       {!offlineCopy && updateAvailable && (
         <div
           role="status"
-          className="bg-sky-600 text-white text-xs py-1.5 px-4 flex items-center justify-center gap-2"
+          className="bg-[#0284c7] text-white text-xs py-1.5 px-4 flex items-center justify-center gap-2"
         >
           <button
             type="button"
@@ -204,53 +203,8 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onNavigateHome }
         </div>
       )}
 
-      {/* Manual Sync Feedback Banner */}
-      {syncStatus && syncStatus.state !== 'syncing' && (
-        <div
-          role="status"
-          className={`text-xs py-1.5 px-4 flex items-center justify-center gap-2 text-white ${
-            syncStatus.state === 'success'
-              ? 'bg-emerald-600'
-              : syncStatus.state === 'offline'
-              ? 'bg-amber-600'
-              : 'bg-rose-600'
-          }`}
-        >
-          {syncStatus.state === 'success' ? (
-            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-          ) : syncStatus.state === 'offline' ? (
-            <WifiOff className="w-3.5 h-3.5 shrink-0" />
-          ) : (
-            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-          )}
-          <span>{syncStatus.message}</span>
-          {!user && isOnlineNow && syncStatus.state === 'offline' && (
-            <button
-              type="button"
-              onClick={() => {
-                clearSyncStatus();
-                openSignInModal({
-                  reason: 'Sign in with your username and PIN to sync with Google Sheets.',
-                });
-              }}
-              className="underline font-bold hover:text-white/90 cursor-pointer ml-1"
-            >
-              Sign In
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={clearSyncStatus}
-            className="p-0.5 rounded hover:bg-white/20 cursor-pointer"
-            aria-label="Dismiss sync status notice"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* Auth Error Banner if sign-in fails */}
-      {authError && !user && (
+      {/* Auth Error Banner */}
+      {authError && !firebaseUser && (
         <div className="bg-rose-600 text-white text-xs py-1.5 px-4 flex items-center justify-center gap-2">
           <AlertCircle className="w-3.5 h-3.5 shrink-0" />
           <span>{authError}</span>

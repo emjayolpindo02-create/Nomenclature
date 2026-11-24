@@ -34,12 +34,26 @@ import {
 } from '../../config/appInfo';
 import { OfflineDownloadCard } from '../common/OfflineDownloadCard';
 
+import {
+  loadSkipFrontPage,
+  saveSkipFrontPage,
+} from '../../engine/frontPage';
+
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  skipFrontPage?: boolean;
+  onToggleSkipFrontPage?: (skip: boolean) => void;
+  onShowFrontPageNow?: () => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({
+  isOpen,
+  onClose,
+  skipFrontPage,
+  onToggleSkipFrontPage,
+  onShowFrontPageNow,
+}) => {
   const { settings, updateSettings, resetSettings } = useSettings();
   const {
     guideSettings,
@@ -59,6 +73,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
   const [isOnline, setIsOnline] = useState(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
+  const [localSkipFrontPage, setLocalSkipFrontPage] = useState<boolean>(() =>
+    loadSkipFrontPage()
+  );
+
+  useEffect(() => {
+    if (typeof skipFrontPage === 'boolean') {
+      setLocalSkipFrontPage(skipFrontPage);
+    } else if (isOpen) {
+      setLocalSkipFrontPage(loadSkipFrontPage());
+    }
+  }, [skipFrontPage, isOpen]);
+
+  const effectiveSkipFrontPage =
+    typeof skipFrontPage === 'boolean' ? skipFrontPage : localSkipFrontPage;
+
+  const handleToggleSkipFront = (nextVal: boolean) => {
+    setLocalSkipFrontPage(nextVal);
+    saveSkipFrontPage(nextVal);
+    onToggleSkipFrontPage?.(nextVal);
+  };
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -479,6 +513,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 className="w-5 h-5 rounded accent-sky-600 cursor-pointer"
               />
             </label>
+
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <label className="flex-1 flex items-center justify-between cursor-pointer">
+                <div>
+                  <span className="text-sm font-semibold text-slate-900 dark:text-white block">
+                    Skip front page next time
+                  </span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Uncheck to show the classroom blackboard start screen when opening I-LAB.
+                  </span>
+                </div>
+                <input
+                  type="checkbox"
+                  data-testid="settings-skip-front-page"
+                  checked={effectiveSkipFrontPage}
+                  onChange={(e) => handleToggleSkipFront(e.target.checked)}
+                  className="w-5 h-5 rounded accent-sky-600 cursor-pointer shrink-0 ml-3"
+                />
+              </label>
+            </div>
+            {onShowFrontPageNow && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onShowFrontPageNow();
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold transition cursor-pointer"
+                >
+                  <span>Open Blackboard Front Page</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Layout Corner, Size, Animation Level */}
@@ -576,21 +644,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 onChange={(e) => updateGuideSettings({ voiceURI: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-100"
               >
-                <option value="">Automatic Clear Manly Voice (Slow &amp; Deep)</option>
+                <option value="">Gemini Hype Announcer (Online) + Device Fallback</option>
                 {availableVoices.map((v, idx) => (
                   <option
                     key={`${v.voiceURI}::${v.name}::${v.lang}::${idx}`}
                     value={v.voiceURI}
                   >
                     {v.name} ({v.lang})
-                    {isVoiceLikelyMale(v) ? ' • Manly / Clear' : ''}
+                    {isVoiceLikelyMale(v) ? ' • Clear' : ''}
                     {v.localService ? ' • Offline' : ''}
                   </option>
                 ))}
               </select>
             ) : (
               <p className="text-[11px] text-amber-700 dark:text-amber-300">
-                No offline speech voices were found in this browser. Live captions and visual guide sync remain active.
+                Uses Gemini Hype Announcer voice online; live captions stay active anytime offline.
               </p>
             )}
 
@@ -599,7 +667,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 type="button"
                 onClick={() =>
                   speakText(
-                    'Hello! Fe₂S₃ is iron (III) sulfide. Check oxidation numbers and balance the charges clearly.'
+                    'Hello! Fe₂S₃ is iron (III) sulfide. Check oxidation numbers and balance the charges clearly!'
                   )
                 }
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-bold transition cursor-pointer"
@@ -622,7 +690,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-[11px] font-semibold transition cursor-pointer"
               >
                 <RotateCcw className="w-3 h-3" />
-                <span>Slower Manly Default</span>
+                <span>Default Announcer Voice</span>
               </button>
             </div>
 
@@ -651,7 +719,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
 
               <div>
                 <div className="flex justify-between font-semibold text-slate-600 dark:text-slate-300">
-                  <span>Pitch (Manly)</span>
+                  <span>Pitch</span>
                   <span>{guideSettings.pitch.toFixed(2)}</span>
                 </div>
                 <input

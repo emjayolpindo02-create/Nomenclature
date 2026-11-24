@@ -126,10 +126,85 @@ export interface PracticeProgress {
   submitted: boolean;
   bestScore: number; // percentage 0 - 100
   attempts: number;
-  passedDate?: string; // official YYYY-MM-DD when passing score was first acquired
+  passedDate?: string; // YYYY-MM-DD
   officialPassDate?: string; // explicit server pass date YYYY-MM-DD
   passedAt?: string | null;
   completedAt?: string;
+}
+
+export type TopicId =
+  | 'ionic-compounds'
+  | 'polyatomic-ions'
+  | 'covalent-compounds'
+  | 'acids'
+  | 'mixed-practice';
+
+export interface TopicDefinition {
+  id: TopicId;
+  title: string;
+  order: number;
+  description: string;
+  passingScore: number;
+  relatedLibraryIds: string[];
+  questions: Question[];
+}
+
+export interface TopicProgressEntry {
+  passed: boolean;
+  score: number;
+  bestScore: number;
+  attempts: number;
+  passedAtMs?: number | null;
+  passedAtIso?: string | null;
+  passedDateManila?: string | null;
+  completedAtIso?: string;
+}
+
+export interface DailyRetryState {
+  dateKey: string; // YYYY-MM-DD in Asia/Manila
+  counts: Record<string, number>;
+}
+
+export interface StudentProfile {
+  uid: string;
+  displayName: string;
+  section: string;
+  email?: string;
+  isAnonymous: boolean;
+  approved: boolean;
+  blocked: boolean;
+  progress: Record<string, TopicProgressEntry>;
+  dailyRetries?: DailyRetryState;
+  createdAtMs?: number | null;
+  updatedAtMs?: number | null;
+}
+
+export interface TopicTeacherRule {
+  lockedForEveryone?: boolean;
+  unlockedForEveryone?: boolean;
+  lockedSections?: string[];
+  unlockedSections?: string[];
+  lockedStudentUids?: string[];
+  unlockedStudentUids?: string[];
+  openAtMs?: number | null;
+  closeAtMs?: number | null;
+}
+
+export interface TopicsSettingsDoc {
+  maxRetriesPerDay: number;
+  topics: Record<string, TopicTeacherRule>;
+  updatedAtMs?: number | null;
+  updatedBy?: string;
+}
+
+export interface QueuedTopicCompletion {
+  queueId: string;
+  uid: string;
+  topicId: TopicId;
+  scorePercent: number;
+  correctCount: number;
+  totalQuestions: number;
+  queuedAtIso: string;
 }
 
 export interface SectionPolicySettings {
@@ -142,7 +217,7 @@ export interface SectionPolicySettings {
 }
 
 export interface UserSettings {
-  theme: 'light' | 'dark' | 'sepia' | 'high-contrast' | 'system';
+  theme: 'sky' | 'cream' | 'mint';
   accentColor: 'indigo' | 'blue' | 'emerald' | 'amber' | 'rose' | 'teal' | 'violet';
   fontFamily: 'system' | 'serif' | 'mono' | 'dyslexic';
   fontSize: 'sm' | 'md' | 'lg' | 'xl';
@@ -152,5 +227,5 @@ export interface UserSettings {
   realSubscripts: boolean;
   periodicColorBy: 'category' | 'block' | 'variable-metal';
   hintsEnabled: boolean;
-  passingScore: number; // default 70
+  passingScore: number; // default 75
 }

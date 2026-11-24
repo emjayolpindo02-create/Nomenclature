@@ -19,10 +19,20 @@ import { SettingsModal } from './components/settings/SettingsModal';
 import { StudentSignInModal } from './components/auth/StudentSignInModal';
 import { GuideWidget } from './components/guide/GuideWidget';
 import { CalibrateGuideModal } from './components/guide/CalibrateGuideModal';
+import {
+  BlackboardStartScreen,
+  WELCOME_ANNOUNCER_LINE,
+} from './components/start/BlackboardStartScreen';
 import { LIBRARY_RULES } from './data/libraryRules';
 import { PRACTICE_SETS } from './data/practiceQuestions';
 import { ChemicalElement } from './types/chemistry';
 import { IS_SINGLE_FILE_BUILD } from './config/appInfo';
+import {
+  isDirectDeepLinkRoute,
+  loadSkipFrontPage,
+  saveSkipFrontPage,
+  shouldShowFrontPageOnLaunch,
+} from './engine/frontPage';
 import {
   buildAppRouteUrl,
   parseAppRoute,
@@ -76,9 +86,30 @@ function MainContent() {
     onNavigateTabRef,
     onNavigateLibraryRef,
     guideSettings,
+    updateGuideSettings,
+    prefersReducedMotion,
+    speakText,
     isMinimized,
   } = useGuide();
   const useHashRouting = shouldUseHashRouting(IS_SINGLE_FILE_BUILD);
+
+  const [skipFrontPage, setSkipFrontPage] = useState<boolean>(() => loadSkipFrontPage());
+  const [showFrontPage, setShowFrontPage] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return shouldShowFrontPageOnLaunch({
+      loc: {
+        pathname: window.location.pathname,
+        search: window.location.search,
+        hash: window.location.hash,
+      },
+      basePath: getBasePath(),
+      validRuleIds: VALID_RULE_IDS,
+      validSetIds: VALID_SET_IDS,
+      skipSaved: loadSkipFrontPage(),
+    });
+  });
+  const [isWipingFrontPage, setIsWipingFrontPage] = useState<boolean>(false);
+  const wipeTimerRef = useRef<number | null>(null);
 
   const [currentTab, setCurrentTab] = useState<NavTab>('libraries');
   const [currentLibraryId, setCurrentLibraryId] = useState<string>('writing-chemical-formulas');
@@ -89,6 +120,66 @@ function MainContent() {
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
+
+  useEffect(() => {
+    return () => {
+      if (wipeTimerRef.current !== null) {
+        window.clearTimeout(wipeTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleToggleSkipFrontPage = useCallback((nextVal: boolean) => {
+    setSkipFrontPage(nextVal);
+    saveSkipFrontPage(nextVal);
+  }, []);
+
+  const handleStartFromBlackboard = useCallback(() => {
+    if (isWipingFrontPage) return;
+
+    if (guideSettings.guideEnabled && guideSettings.welcomeOnStartup) {
+      updateGuideSettings({ hasSeenWelcome: true });
+      speakText(WELCOME_ANNOUNCER_LINE);
+    }
+
+    if (useHashRouting && !window.location.hash) {
+      navigateBrowserUrl(
+        buildAppRouteUrl({
+          useHash: true,
+          basePath: getBasePath(),
+          tab: 'libraries',
+          libraryId: 'writing-chemical-formulas',
+        }),
+        true,
+        true
+      );
+    }
+
+    const reduceMotion = prefersReducedMotion || !settings.animations;
+    if (reduceMotion) {
+      setShowFrontPage(false);
+      setIsWipingFrontPage(false);
+      return;
+    }
+
+    setIsWipingFrontPage(true);
+    if (wipeTimerRef.current !== null) {
+      window.clearTimeout(wipeTimerRef.current);
+    }
+    wipeTimerRef.current = window.setTimeout(() => {
+      setShowFrontPage(false);
+      setIsWipingFrontPage(false);
+    }, 580);
+  }, [
+    isWipingFrontPage,
+    guideSettings.guideEnabled,
+    guideSettings.welcomeOnStartup,
+    updateGuideSettings,
+    speakText,
+    useHashRouting,
+    prefersReducedMotion,
+    settings.animations,
+  ]);
 
   const buildCurrentRoute = useCallback(
     (tab: NavTab, libraryId?: string, practiceSetId?: string) =>
@@ -172,12 +263,17 @@ function MainContent() {
   // Sync URL/hash route once on mount and protect browser Back/Forward/Hash navigation
   useEffect(() => {
     const syncFromUrl = () => {
+      const locSnapshot = {
+        pathname: window.location.pathname,
+        search: window.location.search,
+        hash: window.location.hash,
+      };
+      if (isDirectDeepLinkRoute(locSnapshot, getBasePath(), VALID_RULE_IDS, VALID_SET_IDS)) {
+        setShowFrontPage(false);
+        setIsWipingFrontPage(false);
+      }
       const parsed = parseAppRoute(
-        {
-          pathname: window.location.pathname,
-          search: window.location.search,
-          hash: window.location.hash,
-        },
+        locSnapshot,
         getBasePath(),
         VALID_RULE_IDS,
         VALID_SET_IDS
@@ -186,7 +282,7 @@ function MainContent() {
     };
 
     syncFromUrl();
-    if (useHashRouting && !window.location.hash) {
+    if (!showFrontPage && useHashRouting && !window.location.hash) {
       navigateBrowserUrl(
         buildAppRouteUrl({
           useHash: true,
@@ -205,7 +301,7 @@ function MainContent() {
       window.removeEventListener('popstate', syncFromUrl);
       window.removeEventListener('hashchange', syncFromUrl);
     };
-  }, [useHashRouting]);
+  }, [useHashRouting, showFrontPage]);
 
   // If active library or practice set becomes locked (e.g. after signing out), return to safe unlocked state
   useEffect(() => {
@@ -309,8 +405,42 @@ function MainContent() {
     return 'md:pr-[368px]';
   })();
 
+  const frontPageBlockingHome = showFrontPage && !isWipingFrontPage;
+
+  if (frontPageBlockingHome) {
+    return (
+      <>
+        <BlackboardStartScreen
+          onStart={handleStartFromBlackboard}
+          onOpenSettings={() => setSettingsModalOpen(true)}
+          skipNextTime={skipFrontPage}
+          onToggleSkipNextTime={handleToggleSkipFrontPage}
+          isWiping={false}
+          reduceMotion={prefersReducedMotion || !settings.animations}
+        />
+        <SettingsModal
+          isOpen={settingsModalOpen}
+          onClose={() => setSettingsModalOpen(false)}
+          skipFrontPage={skipFrontPage}
+          onToggleSkipFrontPage={handleToggleSkipFrontPage}
+        />
+      </>
+    );
+  }
+
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
+    <>
+      {showFrontPage && isWipingFrontPage && (
+        <BlackboardStartScreen
+          onStart={handleStartFromBlackboard}
+          onOpenSettings={() => setSettingsModalOpen(true)}
+          skipNextTime={skipFrontPage}
+          onToggleSkipNextTime={handleToggleSkipFrontPage}
+          isWiping={true}
+          reduceMotion={prefersReducedMotion || !settings.animations}
+        />
+      )}
+      <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
       <Header
         onOpenSettings={() => setSettingsModalOpen(true)}
         onNavigateHome={() => {
@@ -448,6 +578,12 @@ function MainContent() {
       <SettingsModal
         isOpen={settingsModalOpen}
         onClose={() => setSettingsModalOpen(false)}
+        skipFrontPage={skipFrontPage}
+        onToggleSkipFrontPage={handleToggleSkipFrontPage}
+        onShowFrontPageNow={() => {
+          setIsWipingFrontPage(false);
+          setShowFrontPage(true);
+        }}
       />
 
       {/* Virtual Guide Floating Card & Calibration Modal */}
@@ -458,7 +594,8 @@ function MainContent() {
         />
       </ErrorBoundary>
       <CalibrateGuideModal />
-    </div>
+      </div>
+    </>
   );
 }
 

@@ -34,6 +34,7 @@ import {
 import { getTourSteps } from '../data/guideKnowledge';
 import { LessonUnlockStatus } from '../engine/lessonLock';
 import { safeGetItem, safeSetItem } from '../utils/safeStorage';
+import { isOfflineFileCopy } from '../config/appInfo';
 import { useSettings } from './SettingsContext';
 
 const GUIDE_SETTINGS_KEY = 'ilab_virtual_guide_settings_v1';
@@ -204,6 +205,9 @@ export const GuideProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const onNavigateLibraryRef = useRef<((id: string) => void) | null>(null);
   const safetyTimerRef = useRef<number | null>(null);
   const recognitionRef = useRef<{ stop?: () => void } | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
+  const speakRequestIdRef = useRef<number>(0);
 
   const speechTimingRef = useRef<SpeechSpeechRefs>({
     isSpeaking: false,
@@ -320,8 +324,33 @@ export const GuideProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
+  const revokeActiveAudio = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.onplay = null;
+      audioRef.current.onended = null;
+      audioRef.current.onerror = null;
+      try {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+      } catch {
+        // ignore
+      }
+      audioRef.current = null;
+    }
+    if (audioUrlRef.current) {
+      try {
+        URL.revokeObjectURL(audioUrlRef.current);
+      } catch {
+        // ignore
+      }
+      audioUrlRef.current = null;
+    }
+  }, []);
+
   const stopSpeaking = useCallback(() => {
+    speakRequestIdRef.current += 1;
     clearSafetyTimer();
+    revokeActiveAudio();
     speechTimingRef.current = {
       ...speechTimingRef.current,
       isSpeaking: false,
@@ -336,7 +365,7 @@ export const GuideProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
     setActiveWordIndex(-1);
     setVisualState((prev) => (prev === 'listening' ? 'listening' : 'idle'));
-  }, [speechSupported]);
+  }, [speechSupported, revokeActiveAudio]);
 
   // Ensure speech stops if guide is hidden or component unmounts
   useEffect(() => {
@@ -348,6 +377,7 @@ export const GuideProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     return () => {
       clearSafetyTimer();
+      revokeActiveAudio();
       try {
         if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
           window.speechSynthesis.cancel();
@@ -356,10 +386,71 @@ export const GuideProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         // ignore
       }
     };
-  }, []);
+  }, [revokeActiveAudio]);
 
   const guideSettingsRef = useRef(guideSettings);
   guideSettingsRef.current = guideSettings;
+
+  const speakWithBrowserFallback = useCallback(
+    (reqId: number, cleanText: string, timeline: SpeechTimeline, cfg: GuideSettings) => {
+      if (reqId !== speakRequestIdRef.current) return;
+      if (!speechSupported) return;
+
+      try {
+        window.speechSynthesis.cancel();
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+        const spokenText = formatTextForClearSpeech(cleanText) || cleanText;
+        const utterance = new SpeechSynthesisUtterance(spokenText);
+        const voices = window.speechSynthesis.getVoices() || [];
+        const preferOffline = !appSnapshotRef.current.isOnline;
+        const pickedVoice = selectPreferredClearVoice(voices, cfg.voiceURI, preferOffline);
+
+        if (pickedVoice) {
+          utterance.voice = pickedVoice;
+          if (pickedVoice.lang) {
+            utterance.lang = pickedVoice.lang;
+          }
+        }
+        utterance.rate = Math.min(1.3, Math.max(0.65, cfg.rate));
+        utterance.pitch = resolveClearManlyPitch(cfg.pitch, pickedVoice);
+        utterance.volume = Math.min(1, Math.max(0, cfg.volume));
+
+        utterance.onboundary = (event) => {
+          if (reqId !== speakRequestIdRef.current) return;
+          if (typeof event.charIndex === 'number') {
+            const scaledCharIdx =
+              spokenText.length > 0
+                ? Math.round((event.charIndex / spokenText.length) * cleanText.length)
+                : event.charIndex;
+            const idx = findWordIndexForCharIndex(timeline, scaledCharIdx);
+            speechTimingRef.current.boundaryWordIndex = idx;
+            speechTimingRef.current.lastBoundaryAtMs = performance.now();
+            setActiveWordIndex(idx);
+          }
+        };
+
+        utterance.onend = () => {
+          if (reqId !== speakRequestIdRef.current) return;
+          clearSafetyTimer();
+          speechTimingRef.current.isSpeaking = false;
+          speechTimingRef.current.boundaryWordIndex = null;
+          setActiveWordIndex(-1);
+          setVisualState('idle');
+        };
+
+        utterance.onerror = () => {
+          // Keep caption/lip timeline fallback running smoothly if audio fails silently
+        };
+
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        // Safe fallback: timeline captions still run cleanly
+      }
+    },
+    [speechSupported]
+  );
 
   const speakText = useCallback(
     (text: string) => {
@@ -367,6 +458,7 @@ export const GuideProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (!cleanText) return;
 
       stopSpeaking();
+      const reqId = speakRequestIdRef.current;
       const cfg = guideSettingsRef.current;
       const timeline = buildSpeechTimeline(cleanText, cfg.rate);
       const startMs = performance.now();
@@ -383,71 +475,98 @@ export const GuideProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         lastBoundaryAtMs: startMs,
       };
 
-      const shouldUseAudio = speechSupported && cfg.voiceEnabled && !cfg.muted && cfg.volume > 0;
-      const fallbackDurationMs = Math.max(1200, timeline.totalEstimatedMs + 450);
+      const shouldUseAudio = cfg.voiceEnabled && !cfg.muted && cfg.volume > 0;
+      const fallbackDurationMs = Math.max(1400, timeline.totalEstimatedMs + 1200);
 
       // Guaranteed close-mouth timer so mouth never stays open on stalled/muted browsers
       safetyTimerRef.current = window.setTimeout(() => {
+        if (reqId !== speakRequestIdRef.current) return;
         speechTimingRef.current.isSpeaking = false;
         speechTimingRef.current.boundaryWordIndex = null;
         setActiveWordIndex(-1);
         setVisualState('idle');
       }, fallbackDurationMs);
 
-      if (shouldUseAudio) {
-        try {
-          window.speechSynthesis.cancel();
-          if (window.speechSynthesis.paused) {
-            window.speechSynthesis.resume();
-          }
-          const spokenText = formatTextForClearSpeech(cleanText) || cleanText;
-          const utterance = new SpeechSynthesisUtterance(spokenText);
-          const voices = window.speechSynthesis.getVoices() || [];
-          const preferOffline = !appSnapshotRef.current.isOnline;
-          const pickedVoice = selectPreferredClearVoice(voices, cfg.voiceURI, preferOffline);
-
-          if (pickedVoice) {
-            utterance.voice = pickedVoice;
-            if (pickedVoice.lang) {
-              utterance.lang = pickedVoice.lang;
-            }
-          }
-          utterance.rate = Math.min(1.3, Math.max(0.65, cfg.rate));
-          utterance.pitch = resolveClearManlyPitch(cfg.pitch, pickedVoice);
-          utterance.volume = Math.min(1, Math.max(0, cfg.volume));
-
-          utterance.onboundary = (event) => {
-            if (typeof event.charIndex === 'number') {
-              const scaledCharIdx =
-                spokenText.length > 0
-                  ? Math.round((event.charIndex / spokenText.length) * cleanText.length)
-                  : event.charIndex;
-              const idx = findWordIndexForCharIndex(timeline, scaledCharIdx);
-              speechTimingRef.current.boundaryWordIndex = idx;
-              speechTimingRef.current.lastBoundaryAtMs = performance.now();
-              setActiveWordIndex(idx);
-            }
-          };
-
-          utterance.onend = () => {
-            clearSafetyTimer();
-            speechTimingRef.current.isSpeaking = false;
-            speechTimingRef.current.boundaryWordIndex = null;
-            setActiveWordIndex(-1);
-            setVisualState('idle');
-          };
-
-          utterance.onerror = () => {
-            // Keep caption/lip timeline fallback running smoothly if audio fails silently
-          };
-
-          window.speechSynthesis.speak(utterance);
-        } catch {
-          // Safe fallback: timeline captions still run cleanly
-        }
+      if (!shouldUseAudio) {
+        return;
       }
+
+      const offlineOrFileCopy =
+        isOfflineFileCopy() ||
+        !appSnapshotRef.current.isOnline ||
+        (typeof navigator !== 'undefined' && navigator.onLine === false);
+
+      if (offlineOrFileCopy) {
+        speakWithBrowserFallback(reqId, cleanText, timeline, cfg);
+        return;
+      }
+
+      const spokenText = formatTextForClearSpeech(cleanText) || cleanText;
+      void (async () => {
+        try {
+          const res = await fetch('/api/nomen/speak', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: spokenText, voiceProfile: 'hype-announcer' }),
+          });
+          if (reqId !== speakRequestIdRef.current) return;
+          if (!res.ok) {
+            speakWithBrowserFallback(reqId, cleanText, timeline, cfg);
+            return;
+          }
+          const data = (await res.json()) as { audioBase64?: string | null; mimeType?: string };
+          if (reqId !== speakRequestIdRef.current) return;
+
+          if (typeof data?.audioBase64 === 'string' && data.audioBase64.length > 0) {
+            const binaryStr = window.atob(data.audioBase64);
+            const bytes = new Uint8Array(binaryStr.length);
+            for (let i = 0; i < binaryStr.length; i++) {
+              bytes[i] = binaryStr.charCodeAt(i);
+            }
+            const blob = new Blob([bytes], { type: data.mimeType || 'audio/wav' });
+            const objectUrl = URL.createObjectURL(blob);
+            if (reqId !== speakRequestIdRef.current) {
+              URL.revokeObjectURL(objectUrl);
+              return;
+            }
+            revokeActiveAudio();
+            const audio = new Audio(objectUrl);
+            audio.volume = Math.min(1, Math.max(0, cfg.volume));
+            audio.playbackRate = Math.min(1.25, Math.max(0.85, cfg.rate / 0.85));
+            audioRef.current = audio;
+            audioUrlRef.current = objectUrl;
+
+            audio.onplay = () => {
+              if (reqId !== speakRequestIdRef.current) return;
+              speechTimingRef.current.startTimeMs = performance.now();
+              setVisualState('talking');
+            };
+            audio.onended = () => {
+              if (reqId !== speakRequestIdRef.current) return;
+              clearSafetyTimer();
+              revokeActiveAudio();
+              speechTimingRef.current.isSpeaking = false;
+              speechTimingRef.current.boundaryWordIndex = null;
+              setActiveWordIndex(-1);
+              setVisualState('idle');
+            };
+            audio.onerror = () => {
+              if (reqId !== speakRequestIdRef.current) return;
+              revokeActiveAudio();
+              speakWithBrowserFallback(reqId, cleanText, timeline, cfg);
+            };
+            await audio.play();
+            return;
+          }
+
+          speakWithBrowserFallback(reqId, cleanText, timeline, cfg);
+        } catch {
+          if (reqId !== speakRequestIdRef.current) return;
+          speakWithBrowserFallback(reqId, cleanText, timeline, cfg);
+        }
+      })();
     },
-    [speechSupported, stopSpeaking]
+    [stopSpeaking, revokeActiveAudio, speakWithBrowserFallback]
   );
 
   // Welcome message on first startup (once) if enabled

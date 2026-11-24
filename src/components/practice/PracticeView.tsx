@@ -1,12 +1,11 @@
-import React, { useEffect, useState } from 'react';
-import { PRACTICE_SETS } from '../../data/practiceQuestions';
-import { ChemicalElement, Question } from '../../types/chemistry';
+import React, { useEffect, useRef, useState } from 'react';
+import { TOPICS, getTopicById } from '../../data/topics';
+import { ChemicalElement, Question, TopicId } from '../../types/chemistry';
 import { checkAnswerForgiving } from '../../engine/namingEngine';
-import { useProgress, Badge, SubmitPracticeInput } from '../../context/ProgressContext';
+import { useProgress, Badge } from '../../context/ProgressContext';
 import { useSettings } from '../../context/SettingsContext';
 import { useAuth } from '../../context/AuthContext';
 import { useGuide } from '../../context/GuideContext';
-import { formatReadableDateKey } from '../../engine/lessonLock';
 import { FormulaRenderer } from '../common/FormulaRenderer';
 import {
   Lock,
@@ -43,18 +42,18 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
   onNavigateToLibrary,
 }) => {
   const {
-    progressMap,
-    queuedAttempts,
-    isSyncingQueue,
+    queuedCompletions,
+    isFlushingQueue,
     lastSyncError,
-    submitPracticeAttempt,
-    syncOfflineQueueNow,
-    isLibraryUnlocked,
-    getUnlockStatus,
+    submitTopicAttempt,
+    flushCompletionQueueNow,
+    isTopicUnlocked,
+    getTopicAccess,
+    getTopicRetryStatus,
     badges,
   } = useProgress();
   const { settings } = useSettings();
-  const { user, sectionPolicy, openSignInModal } = useAuth();
+  const { firebaseUser, studentProfile, isTeacher, openSignInModal } = useAuth();
   const {
     updateAppSnapshot,
     givePracticeHint,
@@ -64,8 +63,11 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
     startTour,
   } = useGuide();
 
-  const [activeSetId, setActiveSetId] = useState<string | null>(() =>
-    initialSetId && isLibraryUnlocked(initialSetId) ? initialSetId : null
+  const resolvedInitialTopicId = getTopicById(initialSetId)?.id;
+  const [activeTopicId, setActiveTopicId] = useState<TopicId | null>(() =>
+    resolvedInitialTopicId && isTopicUnlocked(resolvedInitialTopicId)
+      ? resolvedInitialTopicId
+      : null
   );
   const [currentQuestionIdx, setCurrentQuestionIdx] = useState<number>(0);
   const [userAnswers, setUserAnswers] = useState<Record<string, string>>({});
@@ -75,61 +77,55 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
   const [showHint, setShowHint] = useState<boolean>(false);
   const [quizCompleted, setQuizCompleted] = useState<boolean>(false);
   const [submittingScore, setSubmittingScore] = useState<boolean>(false);
-  const [pendingAttempt, setPendingAttempt] = useState<SubmitPracticeInput | null>(null);
+  const [retryWarning, setRetryWarning] = useState<string | null>(null);
   const [quizResult, setQuizResult] = useState<{
     score: number;
     total: number;
     percent: number;
     passed: boolean;
     newBadges: Badge[];
-    status: 'synced' | 'queued' | 'unsubmitted';
-    officialPassDate?: string;
+    status: 'saved' | 'queued' | 'guest-local';
     statusMessage?: string;
   } | null>(null);
 
-  const effectivePassingScore = sectionPolicy.passingScore || settings.passingScore || 70;
+  const completionLockRef = useRef<boolean>(false);
 
-  // Enforce lock if activeSet becomes locked (e.g. sign out or clock-backward)
+  // Guard active topic against live teacher lock / sign out
   useEffect(() => {
-    if (activeSetId && !isLibraryUnlocked(activeSetId)) {
-      setActiveSetId(null);
+    if (activeTopicId && !isTopicUnlocked(activeTopicId)) {
+      setActiveTopicId(null);
       setQuizCompleted(false);
       setQuizResult(null);
-      setPendingAttempt(null);
     }
-  }, [activeSetId, isLibraryUnlocked]);
+  }, [activeTopicId, isTopicUnlocked]);
 
   useEffect(() => {
-    if (initialSetId) {
-      if (isLibraryUnlocked(initialSetId)) {
-        setActiveSetId(initialSetId);
+    if (resolvedInitialTopicId) {
+      if (isTopicUnlocked(resolvedInitialTopicId)) {
+        setActiveTopicId(resolvedInitialTopicId);
       } else {
-        setActiveSetId(null);
+        setActiveTopicId(null);
       }
     }
-  }, [initialSetId, isLibraryUnlocked]);
+  }, [resolvedInitialTopicId, isTopicUnlocked]);
 
-  const activeSet = activeSetId
-    ? PRACTICE_SETS.find((p) => p.id === activeSetId) || null
-    : null;
-
+  const activeTopic = activeTopicId ? getTopicById(activeTopicId) : null;
   const currentQuestion: Question | null =
-    activeSet && activeSet.questions[currentQuestionIdx]
-      ? activeSet.questions[currentQuestionIdx]
+    activeTopic && activeTopic.questions[currentQuestionIdx]
+      ? activeTopic.questions[currentQuestionIdx]
       : null;
-
   const currentQuestionSubmitted = currentQuestion
     ? Boolean(submittedQuestions[currentQuestion.id])
     : false;
 
   useEffect(() => {
-    const inQuiz = Boolean(activeSet && currentQuestion && !quizCompleted);
+    const inQuiz = Boolean(activeTopic && currentQuestion && !quizCompleted);
     updateAppSnapshot({
       practiceInProgress: inQuiz,
       activeQuestion: inQuiz ? currentQuestion ?? undefined : undefined,
       isActiveQuestionSubmitted: inQuiz ? currentQuestionSubmitted : false,
     });
-  }, [activeSet, currentQuestion, currentQuestionSubmitted, quizCompleted, updateAppSnapshot]);
+  }, [activeTopic, currentQuestion, currentQuestionSubmitted, quizCompleted, updateAppSnapshot]);
 
   useEffect(() => {
     return () => {
@@ -141,10 +137,24 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
     };
   }, [updateAppSnapshot]);
 
-  const startQuiz = (setId: string) => {
-    if (!isLibraryUnlocked(setId)) return;
+  const startQuiz = (topicId: TopicId) => {
+    setRetryWarning(null);
+    const access = getTopicAccess(topicId);
+    if (!access.unlocked) {
+      announceLockedTopic(access);
+      return;
+    }
+    const retryStatus = getTopicRetryStatus(topicId);
+    if (retryStatus.limitReached) {
+      setRetryWarning(
+        `Daily retry limit reached (${retryStatus.usedToday}/${retryStatus.limit} attempts today). Come back tomorrow or ask your teacher.`
+      );
+      return;
+    }
+
     onClearBlockedNotice?.();
-    setActiveSetId(setId);
+    completionLockRef.current = false;
+    setActiveTopicId(topicId);
     setCurrentQuestionIdx(0);
     setUserAnswers({});
     setMatchingSelections({});
@@ -153,7 +163,6 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
     setShowHint(false);
     setQuizCompleted(false);
     setQuizResult(null);
-    setPendingAttempt(null);
   };
 
   const handleSelectOption = (option: string) => {
@@ -191,49 +200,46 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
   };
 
   const submitCurrentAnswer = () => {
-    if (!currentQuestion) return;
+    if (!currentQuestion || submittedQuestions[currentQuestion.id]) return;
+    if (currentQuestion.type === 'matching') {
+      const pairLen = currentQuestion.matchingPairs?.length || 0;
+      if (Object.keys(matchingSelections).length !== pairLen) return;
+    } else if (!userAnswers[currentQuestion.id]?.trim()) {
+      return;
+    }
+
     const correct = isQuestionCorrect(currentQuestion);
     setSubmittedQuestions((prev) => ({ ...prev, [currentQuestion.id]: true }));
     givePracticeFeedback(currentQuestion, correct);
   };
 
   const goToNextQuestion = async () => {
-    if (!activeSet) return;
+    if (!activeTopic || completionLockRef.current) return;
     setShowHint(false);
-    if (currentQuestionIdx + 1 < activeSet.questions.length) {
+
+    if (currentQuestionIdx + 1 < activeTopic.questions.length) {
       setCurrentQuestionIdx((prev) => prev + 1);
       return;
     }
 
-    let correctCount = 0;
-    const questionIds: string[] = [];
-    const missedQuestionIds: string[] = [];
+    completionLockRef.current = true;
+    setSubmittingScore(true);
 
-    activeSet.questions.forEach((q) => {
-      questionIds.push(q.id);
-      if (isQuestionCorrect(q)) {
-        correctCount++;
-      } else {
-        missedQuestionIds.push(q.id);
-      }
+    let correctCount = 0;
+    activeTopic.questions.forEach((q) => {
+      if (isQuestionCorrect(q)) correctCount++;
     });
 
-    const total = activeSet.questions.length;
+    const total = activeTopic.questions.length;
     const percent = Math.round((correctCount / total) * 100);
 
-    const attemptInput: SubmitPracticeInput = {
-      libraryId: activeSet.id,
-      scorePercent: percent,
-      correctCount,
-      totalQuestions: total,
-      questionIds,
-      missedQuestionIds,
-    };
-
-    setPendingAttempt(attemptInput);
-    setSubmittingScore(true);
     try {
-      const res = await submitPracticeAttempt(attemptInput);
+      const res = await submitTopicAttempt({
+        topicId: activeTopic.id,
+        scorePercent: percent,
+        correctCount,
+        totalQuestions: total,
+      });
       setQuizResult({
         score: correctCount,
         total,
@@ -241,98 +247,64 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
         passed: res.passed,
         newBadges: res.newBadges,
         status: res.status,
-        officialPassDate: res.officialPassDate,
         statusMessage: res.message,
       });
       setQuizCompleted(true);
       announcePracticeOutcome({
         passed: res.passed,
         percent,
-        passingScore: effectivePassingScore,
-        title: activeSet.title,
+        passingScore: activeTopic.passingScore,
+        title: activeTopic.title,
       });
     } finally {
       setSubmittingScore(false);
     }
   };
 
-  const handleSignInAndSubmit = () => {
-    if (!pendingAttempt || !quizResult) return;
-    openSignInModal({
-      reason: 'Sign in with your username and PIN to submit your score and record your official pass date.',
-      onSuccess: async (newSession) => {
-        setSubmittingScore(true);
-        try {
-          const res = await submitPracticeAttempt({
-            ...pendingAttempt,
-            overrideSession: newSession,
-          });
-          setQuizResult((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  passed: res.passed,
-                  newBadges: res.newBadges,
-                  status: res.status,
-                  officialPassDate: res.officialPassDate,
-                  statusMessage: res.message,
-                }
-              : prev
-          );
-        } finally {
-          setSubmittingScore(false);
-        }
-      },
-    });
-  };
+  // Topics Hub
+  if (!activeTopic || (!currentQuestion && !quizCompleted)) {
+    const waitingForApproval = Boolean(
+      firebaseUser && !isTeacher && studentProfile && !studentProfile.approved
+    );
 
-  // Practice Set Hub
-  if (!activeSet || (!currentQuestion && !quizCompleted)) {
     return (
-      <div className="w-full max-w-4xl mx-auto space-y-6 animate-in fade-in duration-200 pb-12">
+      <div className="w-full max-w-4xl mx-auto space-y-5 pb-12 text-[#1f3a56]">
         {/* Hub Header */}
         <div
           data-guide-id="practice-header"
-          className="p-6 rounded-3xl bg-gradient-to-br from-indigo-950 via-slate-900 to-sky-950 text-white shadow-xl space-y-2"
+          className="p-5 sm:p-6 rounded-2xl bg-[#ffffff] border border-[#dbe9f4] shadow-[0_6px_22px_-8px_rgba(31,58,86,0.08)] space-y-2"
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight flex items-center gap-2.5">
-              <Trophy className="w-6 h-6 text-sky-400 shrink-0" />
-              <span>Practice Sets</span>
+            <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[#1f3a56] flex items-center gap-2.5">
+              <Trophy className="w-6 h-6 text-[#0284c7] shrink-0" />
+              <span>Topics</span>
             </h1>
-            <div className="flex flex-wrap items-center gap-2.5">
-              {sectionPolicy.waitingTimeHours > 0 && (
-                <span className="text-xs font-semibold text-sky-300">
-                  Pass ≥{effectivePassingScore}% + Next Day ({sectionPolicy.waitingTimeHours}h min)
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={() => startTour('practice')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-bold border border-white/20 transition cursor-pointer"
-              >
-                <Compass className="w-3.5 h-3.5 text-sky-300" />
-                <span>Guided Tour</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => startTour('practice')}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#f4f9fe] hover:bg-[#e8f3fd] text-[#1f3a56] text-xs font-bold border border-[#dbe9f4] transition cursor-pointer"
+            >
+              <Compass className="w-3.5 h-3.5 text-[#0284c7]" />
+              <span>Guided Tour</span>
+            </button>
           </div>
-          <p className="text-sm text-slate-300">
-            Submit a score of <strong>{effectivePassingScore}%+</strong> to unlock the next topic tomorrow. You can practice freely anytime; sign in only when submitting a score.
+          <p className="text-sm text-[#3b5775]">
+            Score <strong className="text-[#1f3a56]">75%+</strong> on each topic to pass and unlock the next level at 12:00 AM the next day.
           </p>
         </div>
 
-        {/* Route Guard Notice if redirected from a locked URL/Back button */}
+        {/* Route Guard Notice */}
         {blockedNotice && (
-          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200 flex items-center justify-between gap-3 text-xs font-medium">
+          <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex items-center justify-between gap-3 text-xs font-medium">
             <div className="flex items-center gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+              <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
               <span>{blockedNotice}</span>
             </div>
             {onClearBlockedNotice && (
               <button
                 type="button"
                 onClick={onClearBlockedNotice}
-                className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 font-semibold cursor-pointer shrink-0"
+                className="px-2.5 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-900 font-semibold cursor-pointer shrink-0"
               >
                 Dismiss
               </button>
@@ -340,225 +312,226 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
           </div>
         )}
 
-        {/* Student Session & Offline Queue Banner */}
+        {retryWarning && (
+          <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold flex items-center gap-2">
+            <Clock className="w-4 h-4 text-amber-700 shrink-0" />
+            <span>{retryWarning}</span>
+          </div>
+        )}
+
+        {/* Approval / Account Status Banner */}
         <div
           data-guide-id="practice-signin"
-          className={`px-4 py-3 rounded-2xl border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 ${
-            user
-              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200'
-              : 'bg-indigo-500/10 border-indigo-500/30 text-indigo-900 dark:text-indigo-200'
+          className={`p-4 sm:px-5 rounded-2xl border shadow-[0_4px_16px_-8px_rgba(31,58,86,0.06)] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 ${
+            waitingForApproval
+              ? 'bg-amber-50 border-amber-200 text-amber-950'
+              : 'bg-[#ffffff] border-[#dbe9f4] text-[#1f3a56]'
           }`}
         >
-          <div className="flex items-start sm:items-center gap-2.5 text-xs font-medium min-w-0 flex-1">
-            <ShieldCheck
-              className={`w-4 h-4 shrink-0 mt-0.5 sm:mt-0 ${
-                user ? 'text-emerald-600 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'
-              }`}
-            />
+          <div className="flex items-start sm:items-center gap-2.5 text-xs sm:text-sm font-medium min-w-0 flex-1">
+            {waitingForApproval ? (
+              <Clock className="w-4 h-4 text-amber-700 shrink-0 mt-0.5 sm:mt-0" />
+            ) : (
+              <ShieldCheck className="w-4 h-4 text-[#0284c7] shrink-0 mt-0.5 sm:mt-0" />
+            )}
             <span className="leading-relaxed">
-              {user
-                ? `Signed in as ${user.fullName}${user.section ? ` (${user.section})` : ''}. Submitted scores sync to your teacher's private sheet.`
-                : 'Guest Mode: Try any unlocked practice freely. Sign in with your username and PIN when you want to submit your score or restore progress.'}
+              {isTeacher
+                ? 'Teacher Preview Mode: All 5 topics are open for classroom demonstration.'
+                : waitingForApproval
+                  ? 'Waiting for teacher approval — your progress is saved on this device only until your teacher approves your account.'
+                  : studentProfile?.approved
+                    ? `Signed in as ${studentProfile.displayName} (${studentProfile.section}). Completed topics save automatically.`
+                    : 'Guest mode: your progress is saved on this device only. Sign in so your teacher can see your progress.'}
             </span>
           </div>
-          {!user ? (
+
+          {!firebaseUser ? (
             <button
               type="button"
-              onClick={() =>
-                openSignInModal({
-                  reason:
-                    'Sign in with your username and PIN to restore your progress or submit scores.',
-                })
-              }
-              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm transition cursor-pointer shrink-0 whitespace-nowrap self-start sm:self-auto"
+              onClick={() => openSignInModal({ mode: 'student' })}
+              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#0284c7] hover:bg-[#0369a1] text-white text-xs font-bold shadow-sm cursor-pointer shrink-0 whitespace-nowrap w-full sm:w-auto"
             >
               <LogIn className="w-3.5 h-3.5" />
-              Sign In
+              <span>Sign In</span>
             </button>
-          ) : queuedAttempts.length > 0 ? (
+          ) : queuedCompletions.length > 0 ? (
             <button
               type="button"
-              onClick={() => void syncOfflineQueueNow()}
-              disabled={isSyncingQueue}
-              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition cursor-pointer shrink-0 whitespace-nowrap self-start sm:self-auto disabled:opacity-60"
+              onClick={() => void flushCompletionQueueNow()}
+              disabled={isFlushingQueue}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm cursor-pointer shrink-0 disabled:opacity-60 w-full sm:w-auto"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingQueue ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${isFlushingQueue ? 'animate-spin' : ''}`} />
               <span>
-                {isSyncingQueue
-                  ? 'Syncing...'
-                  : `Send pending scores (${queuedAttempts.length})`}
+                {isFlushingQueue
+                  ? 'Uploading...'
+                  : `Upload queued (${queuedCompletions.length})`}
               </span>
             </button>
           ) : null}
         </div>
 
-        {lastSyncError && queuedAttempts.length > 0 && (
-          <div className="px-4 py-2.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
-            <span>Last send error: {lastSyncError}</span>
+        {lastSyncError && queuedCompletions.length > 0 && (
+          <div className="px-4 py-2.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-rose-700" />
+            <span>{lastSyncError}</span>
           </div>
         )}
 
-        {/* Badges Earned Ribbon */}
+        {/* Badges Earned */}
         <div
           data-guide-id="practice-badges"
-          className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2"
+          className="p-4 sm:p-5 rounded-2xl bg-[#ffffff] border border-[#dbe9f4] shadow-[0_4px_16px_-8px_rgba(31,58,86,0.06)] space-y-2.5"
         >
-          <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-            <Award className="w-4 h-4 text-amber-500" />
+          <span className="text-xs font-bold text-[#3b5775] uppercase tracking-wider flex items-center gap-1.5">
+            <Award className="w-4 h-4 text-amber-600" />
             Badges ({badges.filter((b) => b.unlocked).length} / {badges.length})
           </span>
-          <div className="flex flex-wrap gap-2 pt-1">
+          <div className="flex flex-wrap gap-2">
             {badges.map((b) => (
               <div
                 key={b.id}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium border transition ${
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium border ${
                   b.unlocked
-                    ? 'bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-500/30'
-                    : 'bg-slate-100 dark:bg-slate-800/50 text-slate-400 border-slate-200 dark:border-slate-800 opacity-60'
+                    ? 'bg-amber-50 text-amber-950 border-amber-300'
+                    : 'bg-[#f4f9fe] text-[#3b5775] border-[#dbe9f4] opacity-85'
                 }`}
                 title={b.description}
               >
                 <span>{b.icon}</span>
                 <span className="font-semibold">{b.name}</span>
-                {b.unlocked && <span className="text-[10px] text-amber-500 font-bold">✓</span>}
+                {b.unlocked && <span className="text-[10px] text-amber-700 font-bold">✓</span>}
               </div>
             ))}
           </div>
         </div>
 
-        {/* Sequential Practice Sets */}
-        <div data-guide-id="practice-sets" className="space-y-3">
-          {PRACTICE_SETS.map((set, idx) => {
-            const unlockStatus = getUnlockStatus(set.id);
-            const unlocked = unlockStatus.unlocked;
-            const prog = progressMap[set.id];
-            const isPassed = Boolean(prog?.submitted && prog?.passed);
+        {/* 5 Topics List — Clean Full-Width Cards */}
+        <div data-guide-id="practice-sets" className="space-y-4">
+          {TOPICS.map((topic) => {
+            const access = getTopicAccess(topic.id);
+            const retryStatus = getTopicRetryStatus(topic.id);
+            const isPassed = access.passed;
+            const unlocked = access.unlocked;
 
             return (
               <div
-                key={set.id}
-                className={`p-5 rounded-2xl border transition-all duration-150 flex flex-wrap items-center justify-between gap-4 ${
+                key={topic.id}
+                className={`w-full p-5 sm:p-6 rounded-2xl border transition-all duration-150 flex flex-col gap-3.5 ${
                   unlocked
-                    ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm hover:border-sky-500'
-                    : 'bg-slate-50/70 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800/60 opacity-85'
+                    ? 'bg-[#ffffff] border-[#dbe9f4] shadow-[0_6px_22px_-8px_rgba(31,58,86,0.08)] hover:border-[#93c5fd]'
+                    : 'bg-[#ffffff] border-[#dbe9f4] shadow-[0_4px_16px_-8px_rgba(31,58,86,0.06)]'
                 }`}
               >
-                <div className="flex items-start gap-4">
-                  <div
-                    className={`w-10 h-10 rounded-xl flex items-center justify-center font-mono font-bold text-sm shrink-0 ${
-                      isPassed
-                        ? 'bg-emerald-500 text-white shadow-sm'
-                        : unlocked
-                        ? 'bg-sky-100 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400'
-                        : unlockStatus.reason === 'wait-next-day' ||
-                          unlockStatus.reason === 'awaiting-sync' ||
-                          unlockStatus.reason === 'clock-backward'
-                        ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                        : 'bg-slate-200 dark:bg-slate-800 text-slate-400'
-                    }`}
-                  >
-                    {isPassed ? (
-                      '✓'
-                    ) : unlocked ? (
-                      idx + 1
-                    ) : unlockStatus.reason === 'wait-next-day' ||
-                      unlockStatus.reason === 'awaiting-sync' ||
-                      unlockStatus.reason === 'clock-backward' ? (
-                      <Clock className="w-4 h-4" />
-                    ) : (
-                      <Lock className="w-4 h-4" />
-                    )}
-                  </div>
-
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                        {set.title}
-                      </h3>
-                      {isPassed && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-                          Passed ({prog.bestScore}%)
-                        </span>
+                {/* Row 1: Number Badge + Title + Status Chips */}
+                <div className="flex items-center justify-between gap-3 w-full">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div
+                      className={`w-10 h-10 rounded-xl flex items-center justify-center font-mono font-bold text-sm shrink-0 ${
+                        isPassed
+                          ? 'bg-emerald-600 text-white'
+                          : unlocked
+                            ? 'bg-[#0284c7] text-white shadow-xs'
+                            : access.reason === 'wait-next-day'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                              : 'bg-[#f1f6fb] text-[#435e7a] border border-[#dbe9f4]'
+                      }`}
+                    >
+                      {isPassed ? (
+                        '✓'
+                      ) : unlocked ? (
+                        topic.order
+                      ) : access.reason === 'wait-next-day' ? (
+                        <Clock className="w-4 h-4" />
+                      ) : (
+                        <Lock className="w-4 h-4" />
                       )}
                     </div>
 
-                    {!unlocked && unlockStatus.previousTitle && (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400 mt-1">
-                        {unlockStatus.reason === 'clock-backward' ? (
-                          <>
-                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                            <span>
-                              Device clock moved backward. Restore automatic time to verify unlock.
-                            </span>
-                          </>
-                        ) : unlockStatus.reason === 'awaiting-sync' ? (
-                          <>
-                            <CloudOff className="w-3.5 h-3.5 shrink-0" />
-                            <span>
-                              Queued score waiting to sync so the official server pass date can be recorded.
-                            </span>
-                          </>
-                        ) : unlockStatus.reason === 'wait-next-day' && unlockStatus.unlockDate ? (
-                          <>
-                            <Clock className="w-3.5 h-3.5 shrink-0" />
-                            <span>
-                              Opens {formatReadableDateKey(unlockStatus.unlockDate)} • {unlockStatus.countdownLabel}
-                            </span>
-                          </>
-                        ) : (
-                          <>
-                            <Lock className="w-3.5 h-3.5 shrink-0" />
-                            <span>
-                              Submit ≥{unlockStatus.requiredScore}% on {unlockStatus.previousTitle} + Next day
-                            </span>
-                          </>
-                        )}
-                      </span>
-                    )}
+                    <h3 className="font-display text-base sm:text-lg font-bold text-[#1f3a56] leading-snug">
+                      {topic.title}
+                    </h3>
                   </div>
+
+                  {(isPassed || (retryStatus.limit > 0 && unlocked)) && (
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                      {isPassed && (
+                        <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 whitespace-nowrap">
+                          Passed ({access.bestScore}%)
+                        </span>
+                      )}
+                      {retryStatus.limit > 0 && unlocked && (
+                        <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-[#f4f9fe] text-[#1f3a56] border border-[#dbe9f4] whitespace-nowrap">
+                          Tries today: {retryStatus.usedToday}/{retryStatus.limit}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-3">
+                {/* Row 2: Full-width Description & Lock Status */}
+                <div className="w-full space-y-2">
+                  <p className="text-sm text-[#3b5775] leading-relaxed">{topic.description}</p>
+
+                  {!unlocked && access.lockLabel && (
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-xs font-semibold text-amber-900">
+                      {access.reason === 'awaiting-sync' ? (
+                        <CloudOff className="w-3.5 h-3.5 shrink-0 text-amber-700" />
+                      ) : access.reason === 'wait-next-day' ? (
+                        <Clock className="w-3.5 h-3.5 shrink-0 text-amber-700" />
+                      ) : (
+                        <Lock className="w-3.5 h-3.5 shrink-0 text-amber-700" />
+                      )}
+                      <span>{access.lockLabel}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Row 3: Action Buttons on their own bottom row */}
+                <div className="w-full pt-3 border-t border-[#ebf3fa] flex flex-col sm:flex-row sm:items-center gap-2.5">
                   {unlocked ? (
                     <button
                       type="button"
-                      onClick={() => startQuiz(set.id)}
-                      className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs shadow-sm transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
+                      disabled={retryStatus.limitReached}
+                      onClick={() => startQuiz(topic.id)}
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#0284c7] to-[#2563eb] hover:from-[#0369a1] hover:to-[#1d4ed8] disabled:opacity-55 text-white font-bold text-xs sm:text-sm shadow-sm transition cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap"
                     >
-                      <span>{prog ? 'Retake Set' : 'Start Set'}</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
+                      <span>
+                        {retryStatus.limitReached
+                          ? 'Daily Limit Reached'
+                          : isPassed
+                            ? 'Practice Again'
+                            : 'Start Topic'}
+                      </span>
+                      <ArrowRight className="w-4 h-4 shrink-0" />
                     </button>
                   ) : (
                     <button
                       type="button"
-                      onClick={() => announceLockedTopic(unlockStatus)}
-                      className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition"
-                      title="Hear why this set is locked"
+                      onClick={() => announceLockedTopic(access)}
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#f4f9fe] border border-[#dbe9f4] hover:bg-[#e8f3fd] text-[#1f3a56] text-xs sm:text-sm font-bold flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer"
                     >
-                      {unlockStatus.reason === 'wait-next-day' ? (
+                      {access.reason === 'wait-next-day' ? (
                         <>
-                          <Clock className="w-3.5 h-3.5 text-amber-500" />
-                          Opens Tomorrow
-                        </>
-                      ) : unlockStatus.reason === 'awaiting-sync' ? (
-                        <>
-                          <CloudOff className="w-3.5 h-3.5 text-amber-500" />
-                          Awaiting Sync
-                        </>
-                      ) : unlockStatus.reason === 'clock-backward' ? (
-                        <>
-                          <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-                          Clock Check
+                          <Clock className="w-4 h-4 text-amber-700 shrink-0" />
+                          <span>{access.countdownLabel || 'Opens tomorrow'}</span>
                         </>
                       ) : (
                         <>
-                          <Lock className="w-3.5 h-3.5" />
-                          Locked
+                          <Lock className="w-4 h-4 text-[#435e7a] shrink-0" />
+                          <span>Locked</span>
                         </>
                       )}
                     </button>
                   )}
+
+                  <button
+                    type="button"
+                    onClick={() => onNavigateToLibrary(topic.relatedLibraryIds[0])}
+                    className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-[#ffffff] hover:bg-[#f4f9fe] border border-[#dbe9f4] text-[#1f3a56] text-xs sm:text-sm font-bold cursor-pointer whitespace-nowrap transition flex items-center justify-center"
+                  >
+                    Study Guide
+                  </button>
                 </div>
               </div>
             );
@@ -571,115 +544,67 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
   // Quiz Completed Score Screen
   if (quizCompleted && quizResult) {
     return (
-      <div className="w-full max-w-2xl mx-auto p-6 sm:p-8 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl space-y-6 text-center animate-in zoom-in-95 duration-200">
+      <div className="w-full max-w-2xl mx-auto p-6 sm:p-8 rounded-3xl bg-[#ffffff] border border-[#dbe9f4] shadow-lg space-y-6 text-center text-[#1f3a56]">
         <div
           className={`w-20 h-20 mx-auto rounded-3xl flex items-center justify-center shadow-lg ${
             quizResult.passed
-              ? 'bg-gradient-to-tr from-emerald-500 to-teal-400 text-white'
-              : 'bg-gradient-to-tr from-amber-500 to-orange-400 text-white'
+              ? 'bg-gradient-to-tr from-emerald-500 to-teal-500 text-white'
+              : 'bg-gradient-to-tr from-amber-500 to-orange-500 text-white'
           }`}
         >
           {quizResult.passed ? <Trophy className="w-10 h-10" /> : <RotateCcw className="w-10 h-10" />}
         </div>
 
         <div>
-          <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-            {activeSet.title} Practice Results
+          <span className="text-xs font-bold uppercase tracking-wider text-[#3b5775]">
+            {activeTopic.title}
           </span>
-          <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white mt-1">
-            {quizResult.passed ? 'Practice Set Passed!' : 'Keep Practicing!'}
+          <h2 className="font-display text-3xl font-bold text-[#1f3a56] mt-1">
+            {quizResult.passed ? 'Topic Passed!' : 'Keep Practicing!'}
           </h2>
-          <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
-            {quizResult.status === 'unsubmitted'
-              ? quizResult.passed
-                ? `You scored ${quizResult.percent}%! This score is NOT submitted yet — sign in with your username and PIN to submit it and schedule tomorrow's unlock.`
-                : `You scored ${quizResult.percent}% (Passing: ${effectivePassingScore}%). Sign in with your username and PIN if you want to submit this attempt, or try again.`
-              : quizResult.status === 'queued'
-              ? `You scored ${quizResult.percent}%. Pending — Saved. Will send when online without duplicates.`
-              : quizResult.passed
-              ? activeSet.id === 'final-mixed-review'
-                ? `Outstanding work! Your score of ${quizResult.percent}% was submitted and recorded on ${quizResult.officialPassDate}. You conquered the Final Mixed Review!`
-                : `Submitted! Official pass date: ${quizResult.officialPassDate || 'today'}. Your next topic unlocks tomorrow when the next calendar day arrives.`
-              : `Submitted (${quizResult.percent}%). You need at least ${effectivePassingScore}% to qualify for tomorrow's unlock.`}
+          <p className="text-sm text-[#3b5775] mt-1">
+            {quizResult.passed
+              ? activeTopic.id === 'mixed-practice'
+                ? `Awesome work! You passed Mixed Practice with ${quizResult.percent}%!`
+                : quizResult.status === 'guest-local'
+                  ? 'Passed! Your next topic opens tomorrow at 12:00 AM (Asia/Manila). Saved on this device only.'
+                  : quizResult.status === 'queued'
+                    ? quizResult.statusMessage
+                    : 'Recorded! Your next topic unlocks tomorrow at 12:00 AM (Asia/Manila).'
+              : `You scored ${quizResult.percent}%. Score at least ${activeTopic.passingScore}% to unlock the next topic.`}
           </p>
         </div>
 
-        {quizResult.status === 'unsubmitted' && (
-          <div className="p-4 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex flex-wrap items-center justify-between gap-3 text-left">
-            <span className="text-xs text-indigo-900 dark:text-indigo-200 font-medium">
-              Unsubmitted guest scores never unlock the next topic. Sign in to submit this attempt.
-            </span>
-            <button
-              type="button"
-              onClick={handleSignInAndSubmit}
-              disabled={submittingScore}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm transition cursor-pointer whitespace-nowrap disabled:opacity-60"
-            >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>{submittingScore ? 'Submitting...' : 'Submit my score'}</span>
-            </button>
-          </div>
-        )}
-
-        {quizResult.status === 'queued' && (
-          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2.5 text-left">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="space-y-0.5 text-xs text-amber-900 dark:text-amber-200">
-                <span className="inline-block px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 font-bold text-[10px] uppercase tracking-wider mr-2">
-                  Pending ({queuedAttempts.length})
-                </span>
-                <span className="font-semibold">
-                  Saved. Will send when online.
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => void syncOfflineQueueNow()}
-                disabled={isSyncingQueue}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition cursor-pointer whitespace-nowrap disabled:opacity-60"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingQueue ? 'animate-spin' : ''}`} />
-                <span>{isSyncingQueue ? 'Syncing...' : 'Send pending scores'}</span>
-              </button>
-            </div>
-            {(lastSyncError ||
-              (quizResult.statusMessage &&
-                quizResult.statusMessage !== 'Saved. Will send when online')) && (
-              <p className="text-[11px] text-rose-700 dark:text-rose-300 font-medium">
-                {lastSyncError || quizResult.statusMessage}
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* Score Card */}
-        <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-around">
+        <div className="p-4 rounded-2xl bg-[#f4f9fe] border border-[#dbe9f4] flex items-center justify-around">
           <div>
-            <span className="text-xs text-slate-500 dark:text-slate-400 block font-medium">Correct</span>
-            <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
+            <span className="text-xs text-[#3b5775] block font-medium">Correct</span>
+            <span className="text-2xl font-black text-emerald-700">
               {quizResult.score} / {quizResult.total}
             </span>
           </div>
-          <div className="w-px h-10 bg-slate-200 dark:bg-slate-700" />
+          <div className="w-px h-10 bg-[#dbe9f4]" />
           <div>
-            <span className="text-xs text-slate-500 dark:text-slate-400 block font-medium">Final Score</span>
-            <span className="text-2xl font-black text-sky-600 dark:text-sky-400">
-              {quizResult.percent}%
-            </span>
+            <span className="text-xs text-[#3b5775] block font-medium">Final Score</span>
+            <span className="text-2xl font-black text-[#0284c7]">{quizResult.percent}%</span>
           </div>
         </div>
 
-        {/* New Badges Alert */}
+        {quizResult.status === 'guest-local' && (
+          <div className="p-3 rounded-xl bg-[#f4f9fe] border border-[#dbe9f4] text-xs font-medium text-[#3b5775]">
+            Guest mode: your progress is saved on this device only. Sign in so your teacher can see your progress.
+          </div>
+        )}
+
         {quizResult.newBadges.length > 0 && (
-          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-left space-y-2">
-            <span className="text-xs font-bold text-amber-700 dark:text-amber-300 uppercase flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-amber-500" /> New Badges Unlocked!
+          <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-left space-y-2">
+            <span className="text-xs font-bold text-amber-900 uppercase flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4 text-amber-700" /> New Badges Unlocked!
             </span>
             <div className="flex flex-wrap gap-2">
               {quizResult.newBadges.map((b) => (
                 <div
                   key={b.id}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-500/20 text-amber-900 dark:text-amber-200 text-xs font-bold"
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-100 text-amber-950 text-xs font-bold border border-amber-200"
                 >
                   <span>{b.icon}</span>
                   <span>{b.name}</span>
@@ -689,20 +614,20 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
           </div>
         )}
 
-        <div className="flex flex-wrap gap-3 pt-2">
+        <div className="flex flex-col sm:flex-row gap-3 pt-2">
           <button
             type="button"
-            onClick={() => startQuiz(activeSet.id)}
-            className="flex-1 py-3 px-4 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs hover:bg-slate-200 dark:hover:bg-slate-700 transition cursor-pointer"
+            onClick={() => startQuiz(activeTopic.id)}
+            className="flex-1 py-3 px-4 rounded-xl bg-[#ffffff] border border-[#dbe9f4] text-[#1f3a56] font-bold text-xs hover:bg-[#f4f9fe] transition cursor-pointer"
           >
-            Retake This Set
+            Try Again
           </button>
           <button
             type="button"
-            onClick={() => setActiveSetId(null)}
-            className="flex-1 py-3 px-4 rounded-xl bg-sky-600 text-white font-bold text-xs hover:bg-sky-700 transition shadow-sm cursor-pointer"
+            onClick={() => setActiveTopicId(null)}
+            className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-[#0284c7] to-[#2563eb] text-white font-bold text-xs shadow-sm cursor-pointer"
           >
-            Back to Practice Hub
+            Back to Topics
           </button>
         </div>
       </div>
@@ -715,50 +640,49 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
   const isCorrect = isSubmitted && isQuestionCorrect(currentQuestion);
 
   return (
-    <div className="w-full max-w-2xl mx-auto space-y-6 animate-in fade-in duration-200 pb-12">
-      {/* Quiz Top Navigation Bar */}
-      <div className="flex items-center justify-between text-xs font-bold text-slate-500 dark:text-slate-400">
+    <div className="w-full max-w-2xl mx-auto space-y-6 pb-12 text-[#1f3a56]">
+      <div className="flex items-center justify-between text-xs font-bold text-[#3b5775]">
         <button
           type="button"
-          onClick={() => setActiveSetId(null)}
-          className="hover:text-slate-800 dark:hover:text-white transition cursor-pointer"
+          onClick={() => setActiveTopicId(null)}
+          className="hover:text-[#1f3a56] transition cursor-pointer"
         >
-          ← Exit to Hub
+          ← Back to Topics
         </button>
-        <span className="text-slate-700 dark:text-slate-300 font-mono">
-          Question {currentQuestionIdx + 1} of {activeSet.questions.length}
+        <span className="text-[#1f3a56] font-mono">
+          Question {currentQuestionIdx + 1} of {activeTopic.questions.length}
         </span>
         <button
           type="button"
-          onClick={() => onNavigateToLibrary(activeSet.id)}
-          className="text-sky-600 dark:text-sky-400 hover:underline cursor-pointer"
+          onClick={() => onNavigateToLibrary(activeTopic.relatedLibraryIds[0])}
+          className="text-[#0284c7] hover:underline cursor-pointer"
         >
-          Review Lesson
+          Study Guide
         </button>
       </div>
 
       {/* Progress Bar */}
-      <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+      <div className="w-full h-2.5 rounded-full bg-[#e5eff8] overflow-hidden">
         <div
-          className="h-full bg-sky-500 transition-all duration-300"
+          className="h-full bg-gradient-to-r from-[#0284c7] to-[#2563eb] transition-all duration-300"
           style={{
-            width: `${((currentQuestionIdx + 1) / activeSet.questions.length) * 100}%`,
+            width: `${((currentQuestionIdx + 1) / activeTopic.questions.length) * 100}%`,
           }}
         />
       </div>
 
       {/* Question Card */}
-      <div className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl space-y-6">
+      <div className="p-6 sm:p-8 rounded-3xl bg-[#ffffff] border border-[#dbe9f4] shadow-[0_10px_28px_-10px_rgba(31,58,86,0.08)] space-y-6">
         <div>
-          <span className="text-xs font-bold text-sky-600 dark:text-sky-400 uppercase tracking-wider block">
+          <span className="text-xs font-bold text-[#0284c7] uppercase tracking-wider block">
             {currentQuestion.ruleTitle}
           </span>
-          <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white mt-1 leading-snug">
+          <h2 className="font-display text-xl sm:text-2xl font-bold text-[#1f3a56] mt-1 leading-snug">
             {currentQuestion.prompt}
           </h2>
 
           {currentQuestion.formula && (
-            <div className="mt-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 inline-block">
+            <div className="mt-3 p-3 rounded-xl bg-[#f4f9fe] border border-[#dbe9f4] inline-block">
               <FormulaRenderer
                 formula={currentQuestion.formula}
                 size="xl"
@@ -774,18 +698,17 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
             {currentQuestion.options.map((opt, i) => {
               const isSelected = userAnswers[currentQuestion.id] === opt;
               let btnStyle =
-                'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white hover:border-sky-500';
+                'bg-[#ffffff] border-[#dbe9f4] text-[#1f3a56] hover:border-[#0284c7] hover:bg-[#f4f9fe]';
 
               if (isSubmitted) {
                 if (opt === currentQuestion.correctAnswer) {
-                  btnStyle =
-                    'bg-emerald-500/15 border-emerald-500 text-emerald-800 dark:text-emerald-300 font-bold';
+                  btnStyle = 'bg-emerald-50 border-emerald-500 text-emerald-950 font-bold';
                 } else if (isSelected) {
-                  btnStyle = 'bg-rose-500/15 border-rose-500 text-rose-800 dark:text-rose-300';
+                  btnStyle = 'bg-rose-50 border-rose-500 text-rose-950';
                 }
               } else if (isSelected) {
                 btnStyle =
-                  'bg-sky-500/15 border-sky-500 text-sky-700 dark:text-sky-300 font-semibold ring-1 ring-sky-500';
+                  'bg-[#eff6ff] border-[#0284c7] text-[#1f3a56] font-semibold ring-1 ring-[#0284c7]';
               }
 
               return (
@@ -798,10 +721,10 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
                 >
                   <span>{opt}</span>
                   {isSubmitted && opt === currentQuestion.correctAnswer && (
-                    <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
+                    <CheckCircle className="w-5 h-5 text-emerald-700 shrink-0" />
                   )}
                   {isSubmitted && isSelected && opt !== currentQuestion.correctAnswer && (
-                    <XCircle className="w-5 h-5 text-rose-500 shrink-0" />
+                    <XCircle className="w-5 h-5 text-rose-700 shrink-0" />
                   )}
                 </button>
               );
@@ -812,31 +735,29 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
         {/* Typed Answers */}
         {!currentQuestion.options && currentQuestion.type !== 'matching' && (
           <div className="space-y-3">
-            <div className="relative">
-              <input
-                type="text"
-                disabled={isSubmitted}
-                value={userAnswers[currentQuestion.id] || ''}
-                onChange={(e) => handleTypeAnswer(e.target.value)}
-                onKeyDown={(e) => {
-                  if (
-                    e.key === 'Enter' &&
-                    !isSubmitted &&
-                    userAnswers[currentQuestion.id]?.trim()
-                  ) {
-                    submitCurrentAnswer();
-                  }
-                }}
-                placeholder={
-                  currentQuestion.type === 'typed-formula'
-                    ? 'Type formula (e.g. Ca3(PO4)2 or Al2O3)...'
-                    : 'Type compound name...'
+            <input
+              type="text"
+              disabled={isSubmitted}
+              value={userAnswers[currentQuestion.id] || ''}
+              onChange={(e) => handleTypeAnswer(e.target.value)}
+              onKeyDown={(e) => {
+                if (
+                  e.key === 'Enter' &&
+                  !isSubmitted &&
+                  userAnswers[currentQuestion.id]?.trim()
+                ) {
+                  submitCurrentAnswer();
                 }
-                aria-label="Your answer"
-                className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-mono text-base focus:outline-none focus:ring-2 focus:ring-sky-500"
-              />
-            </div>
-            <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
+              }}
+              placeholder={
+                currentQuestion.type === 'typed-formula'
+                  ? 'Type formula (e.g. Ca3(PO4)2 or Al2O3)...'
+                  : 'Type compound name...'
+              }
+              aria-label="Your answer"
+              className="w-full px-4 py-3 rounded-xl bg-[#ffffff] border border-[#dbe9f4] text-[#1f3a56] placeholder:text-[#526d88]/70 font-mono text-base focus:outline-none focus:ring-2 focus:ring-[#0284c7]"
+            />
+            <span className="text-[11px] text-[#3b5775] block">
               Tip: Plain text like <code>H2SO4</code> or <code>iron(II) sulfide</code> works.
             </span>
           </div>
@@ -845,12 +766,12 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
         {/* Matching Questions */}
         {currentQuestion.type === 'matching' && currentQuestion.matchingPairs && (
           <div className="space-y-4">
-            <p className="text-xs text-slate-500 dark:text-slate-400">
+            <p className="text-xs text-[#3b5775]">
               Click an item on the left, then click its corresponding match on the right:
             </p>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <span className="text-xs font-bold text-slate-500 block uppercase">Prompts</span>
+                <span className="text-xs font-bold text-[#3b5775] block uppercase">Prompts</span>
                 {currentQuestion.matchingPairs.map((pair, i) => {
                   const matchedRight = matchingSelections[pair.left];
                   const isSelected = matchingSelectedLeft === pair.left;
@@ -862,15 +783,19 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
                       onClick={() => handleMatchingLeftClick(pair.left)}
                       className={`w-full p-3 rounded-xl border text-left text-xs font-semibold transition cursor-pointer ${
                         isSelected
-                          ? 'bg-sky-500 text-white border-sky-500 shadow-sm'
+                          ? 'bg-[#0284c7] text-white border-[#0284c7] shadow-sm'
                           : matchedRight
-                          ? 'bg-slate-100 dark:bg-slate-800/80 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white'
-                          : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                            ? 'bg-[#eff6ff] border-[#93c5fd] text-[#1f3a56]'
+                            : 'bg-[#ffffff] border-[#dbe9f4] text-[#1f3a56] hover:bg-[#f4f9fe]'
                       }`}
                     >
                       <span>{pair.left}</span>
                       {matchedRight && (
-                        <span className="block font-mono text-[11px] text-sky-600 dark:text-sky-400 mt-1">
+                        <span
+                          className={`block font-mono text-[11px] mt-1 ${
+                            isSelected ? 'text-sky-100' : 'text-[#0284c7]'
+                          }`}
+                        >
                           ↳ {matchedRight}
                         </span>
                       )}
@@ -880,14 +805,14 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
               </div>
 
               <div className="space-y-2">
-                <span className="text-xs font-bold text-slate-500 block uppercase">Matches</span>
+                <span className="text-xs font-bold text-[#3b5775] block uppercase">Matches</span>
                 {currentQuestion.matchingPairs.map((pair, i) => (
                   <button
                     key={i}
                     type="button"
                     disabled={isSubmitted}
                     onClick={() => handleMatchingRightClick(pair.right)}
-                    className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:border-emerald-500 text-left text-xs font-mono font-bold text-slate-800 dark:text-slate-200 transition cursor-pointer"
+                    className="w-full p-3 rounded-xl border border-[#dbe9f4] bg-[#ffffff] hover:border-[#0284c7] hover:bg-[#f4f9fe] text-left text-xs font-mono font-bold text-[#1f3a56] transition cursor-pointer"
                   >
                     {pair.right}
                   </button>
@@ -905,24 +830,22 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
               onClick={() => {
                 const opening = !showHint;
                 setShowHint(opening);
-                if (opening) {
-                  givePracticeHint(currentQuestion);
-                }
+                if (opening) givePracticeHint(currentQuestion);
               }}
-              className="inline-flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 font-semibold hover:underline cursor-pointer"
+              className="inline-flex items-center gap-1.5 text-xs text-amber-800 font-semibold hover:underline cursor-pointer"
             >
               <HelpCircle className="w-3.5 h-3.5" />
               <span>{showHint ? 'Hide Hint' : 'Hint'}</span>
             </button>
             {showHint && currentQuestion.hint && (
-              <p className="mt-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 animate-in fade-in duration-150">
+              <p className="mt-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-950">
                 {currentQuestion.hint}
               </p>
             )}
           </div>
         )}
 
-        {/* Action Controls & Feedback */}
+        {/* Action Controls */}
         {!isSubmitted ? (
           <button
             type="button"
@@ -933,23 +856,23 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
                   (currentQuestion.matchingPairs?.length || 0)
                 : !userAnswers[currentQuestion.id]?.trim()
             }
-            className="w-full py-3.5 rounded-xl bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white font-bold text-sm shadow-md transition cursor-pointer disabled:cursor-not-allowed"
+            className="w-full py-3.5 rounded-xl bg-gradient-to-r from-[#0284c7] to-[#2563eb] hover:from-[#0369a1] hover:to-[#1d4ed8] disabled:opacity-50 text-white font-bold text-sm shadow-md transition cursor-pointer disabled:cursor-not-allowed"
           >
             Check Answer
           </button>
         ) : (
-          <div className="space-y-4 pt-2 animate-in fade-in duration-150">
+          <div className="space-y-4 pt-2">
             <div
               className={`p-4 rounded-2xl border flex items-start gap-3 ${
                 isCorrect
-                  ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
-                  : 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                  : 'bg-rose-50 border-rose-200 text-rose-950'
               }`}
             >
               {isCorrect ? (
-                <CheckCircle className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                <CheckCircle className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
               ) : (
-                <XCircle className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                <XCircle className="w-5 h-5 text-rose-700 shrink-0 mt-0.5" />
               )}
               <div className="space-y-1 text-xs">
                 <span className="font-bold text-sm block">
@@ -961,7 +884,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
                     <strong className="font-mono">{currentQuestion.correctAnswer}</strong>
                   </div>
                 )}
-                <p className="leading-relaxed pt-1 text-slate-700 dark:text-slate-300">
+                <p className="leading-relaxed pt-1 text-[#1f3a56]">
                   {currentQuestion.explanation}
                 </p>
               </div>
@@ -969,16 +892,16 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
 
             <button
               type="button"
-              onClick={goToNextQuestion}
+              onClick={() => void goToNextQuestion()}
               disabled={submittingScore}
-              className="w-full py-3.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold text-sm shadow-md hover:opacity-90 transition cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
+              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-[#0284c7] to-[#2563eb] hover:from-[#0369a1] hover:to-[#1d4ed8] text-white font-bold text-sm shadow-md transition cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
             >
               <span>
                 {submittingScore
                   ? 'Saving...'
-                  : currentQuestionIdx + 1 === activeSet.questions.length
-                  ? 'View Results'
-                  : 'Next Question'}
+                  : currentQuestionIdx + 1 === activeTopic.questions.length
+                    ? 'Finish Topic'
+                    : 'Next Question'}
               </span>
               <ArrowRight className="w-4 h-4" />
             </button>

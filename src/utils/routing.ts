@@ -9,6 +9,7 @@ export const VALID_TABS: NavTab[] = [
   'converter',
   'periodic-table',
   'practice',
+  'teacher',
 ];
 
 export function shouldUseHashRouting(
@@ -65,7 +66,7 @@ export function parseAppRoute(
     let ruleId: string | null = null;
     let setId: string | null = null;
 
-    // 1. Prefer hash routes (#/library, #/library/<id>, #/periodic-table, #/practice/<id>, etc.)
+    // 1. Prefer hash routes (#/library, #/library/<id>, #/periodic-table, #/practice/<id>, #/teacher, etc.)
     const rawHash = (loc.hash || '').replace(/^#/, '');
     if (rawHash.startsWith('/')) {
       const [hashPathPart, hashQueryPart = ''] = rawHash.split('?');
@@ -90,7 +91,7 @@ export function parseAppRoute(
         }
         return { tab, ruleId, setId: null };
       }
-      if (head === 'practice') {
+      if (head === 'practice' || head === 'topics') {
         tab = 'practice';
         if (second && validSetIds.includes(second)) {
           setId = second;
@@ -128,6 +129,8 @@ export function parseAppRoute(
     } else if (tabParam) {
       if (tabParam === 'nomen') {
         tab = 'wizard';
+      } else if (tabParam === 'topics') {
+        tab = 'practice';
       } else if (VALID_TABS.includes(tabParam as NavTab)) {
         tab = tabParam as NavTab;
       }
@@ -137,7 +140,7 @@ export function parseAppRoute(
       if ((head === 'rule' || head === 'library' || head === 'libraries') && second && validRuleIds.includes(second)) {
         tab = 'libraries';
         ruleId = second;
-      } else if (head === 'practice' && second && validSetIds.includes(second)) {
+      } else if ((head === 'practice' || head === 'topics') && second && validSetIds.includes(second)) {
         tab = 'practice';
         setId = second;
       } else if (head === 'library') {

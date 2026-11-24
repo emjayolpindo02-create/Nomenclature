@@ -8,7 +8,7 @@ export const OfflineIndicator: React.FC = () => {
   const [isOnline, setIsOnline] = useState(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
-  const { isSyncingQueue } = useProgress();
+  const { isFlushingQueue } = useProgress();
   const { offlineReady } = usePwaStatus();
   const offlineCopy = isOfflineFileCopy();
 
@@ -25,16 +25,16 @@ export const OfflineIndicator: React.FC = () => {
     };
   }, []);
 
-  if (isOnline && isSyncingQueue) {
+  if (isOnline && isFlushingQueue) {
     return (
       <div className="inline-flex items-center gap-1.5 text-xs">
         <span
-          className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-sky-500/15 text-sky-700 dark:text-sky-300 font-semibold border border-sky-500/30 whitespace-nowrap"
-          title="Syncing scores with Google Sheets"
-          aria-label="Syncing..."
+          className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl bg-[#f4f9fe] text-[#0284c7] font-semibold border border-[#dbe9f4] whitespace-nowrap"
+          title="Saving pending completions"
+          aria-label="Saving..."
         >
           <RefreshCw className="w-3.5 h-3.5 shrink-0 animate-spin" />
-          <span>Syncing...</span>
+          <span className="hidden sm:inline">Saving...</span>
         </span>
       </div>
     );
@@ -44,12 +44,12 @@ export const OfflineIndicator: React.FC = () => {
     return (
       <div className="inline-flex items-center gap-1.5 text-xs">
         <span
-          className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 font-semibold border border-amber-500/30 whitespace-nowrap"
-          title="Offline — app works locally and saves scores as pending"
+          className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl bg-amber-50 text-amber-900 font-semibold border border-amber-200 whitespace-nowrap"
+          title="Offline — built-in library and tools stay available locally"
           aria-label="Offline"
         >
           <WifiOff className="w-3.5 h-3.5 shrink-0" />
-          <span>Offline</span>
+          <span className="hidden sm:inline">Offline</span>
         </span>
       </div>
     );
@@ -59,17 +59,12 @@ export const OfflineIndicator: React.FC = () => {
     return (
       <div className="inline-flex items-center gap-1.5 text-xs">
         <span
-          className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-semibold border border-emerald-500/25 whitespace-nowrap"
-          title={
-            offlineCopy
-              ? 'Offline ready — single-file copy works with no internet'
-              : 'Offline ready — cached for offline use and ready to sync'
-          }
+          className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl bg-emerald-50 text-emerald-800 font-semibold border border-emerald-200 whitespace-nowrap"
+          title="Offline ready — built-in compound library works without internet"
           aria-label="Offline ready"
         >
-          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-          <span>Offline ready</span>
+          <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-700" />
+          <span className="hidden sm:inline">Offline ready</span>
         </span>
       </div>
     );
@@ -78,13 +73,12 @@ export const OfflineIndicator: React.FC = () => {
   return (
     <div className="inline-flex items-center gap-1.5 text-xs">
       <span
-        className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-semibold border border-emerald-500/25 whitespace-nowrap"
-        title="Online — ready to sync scores"
+        className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl bg-[#ffffff] text-[#1f3a56] font-semibold border border-[#dbe9f4] whitespace-nowrap"
+        title="Online"
         aria-label="Online"
       >
-        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-        <Wifi className="w-3.5 h-3.5 shrink-0" />
-        <span>Online</span>
+        <Wifi className="w-3.5 h-3.5 shrink-0 text-[#0284c7]" />
+        <span className="hidden sm:inline">Online</span>
       </span>
     </div>
   );

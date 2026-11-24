@@ -41,8 +41,8 @@ const VALID_LIBRARY_IDS = [
   'hydrogen-polyatomic-ternary-acids',
 ];
 
-const DOCTOR_NOMEN_INSTRUCTION = `You are Doctor Nomen, a warm, friendly, and clear chemistry tutor inside the I-LAB learning app.
-Your job is to guide learners and answer any question about these 8 chemical compound naming and formula writing topics:
+const DOCTOR_NOMEN_INSTRUCTION = `You are Doctor Nomen, an enthusiastic, high-energy hype announcer and warm chemistry guide inside the I-LAB learning app.
+Your job is to pump up learners, guide them clearly, and answer any question about these 8 chemical compound naming and formula writing topics:
 1. Writing Chemical Formulas (libraryId: "writing-chemical-formulas"):
    - Cation (+) first, anion (-) second.
    - Criss-cross charge magnitudes as subscripts; omit subscript 1.
@@ -69,7 +69,7 @@ Your job is to guide learners and answer any question about these 8 chemical com
    - Special note: H2O is water, a neutral molecule, never named like an acid.
 
 Rules for your responses:
-- Speak naturally, simply, and encouragingly in 2 to 4 clear sentences so your answer reads smoothly aloud as voice speech. Avoid markdown syntax like **, ##, or backticks.
+- Speak with lively, encouraging hype announcer energy in 2 to 4 punchy, crystal-clear sentences so your answer reads great aloud. Avoid markdown syntax like **, ##, or backticks.
 - Write chemical formulas in plain readable text inside "reply" (or pronounce clearly) and put the exact clean ASCII formula in the "formula" field (e.g., "Fe2S3", "Ca3(PO4)2", "HNO3"), or "" if none applies.
 - Never mention any school name, author, course code, or case letters like Case A, Case B, A1, B2.
 - If the user asks something outside chemistry or these topics, politely connect it back to chemical naming or answer briefly and invite a compound naming question.
@@ -232,7 +232,7 @@ async function startServer() {
     }
   });
 
-  // Convert Doctor Nomen's reply into spoken audio using Gemini TTS (with cache + graceful browser fallback on quota)
+  // Convert Doctor Nomen's reply into spoken audio using Gemini Hype Announcer TTS (with cache + graceful browser fallback)
   app.post('/api/nomen/speak', async (req, res) => {
     try {
       const text = typeof req.body?.text === 'string' ? cleanTextForSpeech(req.body.text) : '';
@@ -241,14 +241,18 @@ async function startServer() {
         return;
       }
 
+      const voiceName = 'Fenrir';
+      const voiceStyle =
+        'High-energy, enthusiastic hype announcer who loves chemistry — booming charisma, upbeat stadium cadence, crisp articulation, and clear pronunciation of formulas and chemical names';
       const clippedText = text.slice(0, 1200);
-      const ttsCacheKey = `Iapetus:${clippedText}`;
+      const ttsCacheKey = `hype-announcer:${voiceName}:${clippedText}`;
       const cachedAudio = ttsAudioCache.get(ttsCacheKey);
       if (cachedAudio) {
         res.json({
           audioBase64: cachedAudio,
           mimeType: 'audio/wav',
-          voiceName: 'Iapetus',
+          voiceName,
+          voiceStyle: 'gemini-hype-announcer',
           cached: true,
         });
         return;
@@ -273,32 +277,44 @@ async function startServer() {
         return;
       }
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash-lite-tts',
-        contents: [
-          {
-            role: 'user',
-            parts: [
+      let base64Audio: string | undefined;
+      for (const ttsModel of ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'] as const) {
+        try {
+          const response = await ai.models.generateContent({
+            model: ttsModel,
+            contents: [
               {
-                text: clippedText,
-                speechMetadata: {
-                  style: 'Warm, clear, steady chemistry teacher',
-                },
+                role: 'user',
+                parts: [
+                  {
+                    text: clippedText,
+                    speechMetadata: {
+                      style: voiceStyle,
+                    },
+                  },
+                ],
               },
             ],
-          },
-        ],
-        config: {
-          responseModalities: ['AUDIO'],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: 'Iapetus' },
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName },
+                },
+              },
             },
-          },
-        },
-      });
+          });
+          base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+          if (base64Audio) break;
+        } catch (modelErr) {
+          const { status } = parseGeminiError(modelErr);
+          if (status === 429) {
+            throw modelErr;
+          }
+          // Try lite model fallback if flagship TTS model errors
+        }
+      }
 
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
       if (!base64Audio) {
         res.json({
           audioBase64: null,
@@ -317,6 +333,8 @@ async function startServer() {
       res.json({
         audioBase64: base64Audio,
         mimeType: 'audio/wav',
+        voiceName,
+        voiceStyle: 'gemini-hype-announcer',
       });
     } catch (err) {
       const { status } = parseGeminiError(err);
