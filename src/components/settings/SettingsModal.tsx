@@ -137,6 +137,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  const handleCheckSheetsConnection = async () => {
+    setCheckingSheets(true);
+    try {
+      const res = await checkSheetsConnection();
+      setSheetsCheckResult(res);
+    } finally {
+      setCheckingSheets(false);
+    }
+  };
+
   const accentOptions: { id: UserSettings['accentColor']; name: string; color: string }[] = [
     { id: 'indigo', name: 'Indigo', color: '#6366f1' },
     { id: 'blue', name: 'Blue', color: '#2563eb' },

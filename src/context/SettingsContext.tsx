@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { UserSettings } from '../types/chemistry';
-import { useAuth } from './AuthContext';
 import { safeGetItem, safeRemoveItem, safeSetItem } from '../utils/safeStorage';
 
 const DEFAULT_SETTINGS: UserSettings = {
@@ -17,6 +16,8 @@ const DEFAULT_SETTINGS: UserSettings = {
   passingScore: 75,
 };
 
+const SETTINGS_STORAGE_KEY = 'ilab_settings_v3_local';
+const LEGACY_GUEST_STORAGE_KEY = 'ilab_settings_v3_guest';
 const LEGACY_STORAGE_KEY = 'compound_naming_guide_settings_v1';
 
 function normalizeLightTheme(raw: unknown): UserSettings['theme'] {
@@ -25,13 +26,10 @@ function normalizeLightTheme(raw: unknown): UserSettings['theme'] {
   return 'sky';
 }
 
-function getStorageKey(uid: string | undefined): string {
-  return uid ? `ilab_settings_v3_${uid}` : 'ilab_settings_v3_guest';
-}
-
-function loadSettingsForUser(uid: string | undefined): UserSettings {
+function loadSettings(): UserSettings {
   try {
-    const stored = safeGetItem(getStorageKey(uid));
+    const stored =
+      safeGetItem(SETTINGS_STORAGE_KEY) ?? safeGetItem(LEGACY_GUEST_STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored) as Partial<UserSettings> & { theme?: unknown };
       return {
@@ -55,20 +53,14 @@ interface SettingsContextType {
 const SettingsContext = createContext<SettingsContextType | null>(null);
 
 export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { firebaseUser } = useAuth();
-  const activeUid = firebaseUser?.uid;
-  const [settings, setSettings] = useState<UserSettings>(() => loadSettingsForUser(activeUid));
+  const [settings, setSettings] = useState<UserSettings>(() => loadSettings());
 
   useEffect(() => {
     safeRemoveItem(LEGACY_STORAGE_KEY);
   }, []);
 
-  useEffect(() => {
-    setSettings(loadSettingsForUser(activeUid));
-  }, [activeUid]);
-
   const persistSettings = (updated: UserSettings) => {
-    safeSetItem(getStorageKey(activeUid), JSON.stringify(updated));
+    safeSetItem(SETTINGS_STORAGE_KEY, JSON.stringify(updated));
   };
 
   const updateSettings = (partial: Partial<UserSettings>) => {

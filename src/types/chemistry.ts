@@ -160,60 +160,27 @@ export interface TopicProgressEntry {
   completedAtIso?: string;
 }
 
-export interface DailyRetryState {
-  dateKey: string; // YYYY-MM-DD in Asia/Manila
-  counts: Record<string, number>;
-}
-
-export interface StudentProfile {
-  uid: string;
-  displayName: string;
+export interface StudentIdentity {
+  fullName: string;
   section: string;
-  email?: string;
-  isAnonymous: boolean;
-  approved: boolean;
-  blocked: boolean;
-  progress: Record<string, TopicProgressEntry>;
-  dailyRetries?: DailyRetryState;
-  createdAtMs?: number | null;
-  updatedAtMs?: number | null;
+  savedAtIso: string;
 }
 
-export interface TopicTeacherRule {
-  lockedForEveryone?: boolean;
-  unlockedForEveryone?: boolean;
-  lockedSections?: string[];
-  unlockedSections?: string[];
-  lockedStudentUids?: string[];
-  unlockedStudentUids?: string[];
-  openAtMs?: number | null;
-  closeAtMs?: number | null;
-}
-
-export interface TopicsSettingsDoc {
-  maxRetriesPerDay: number;
-  topics: Record<string, TopicTeacherRule>;
-  updatedAtMs?: number | null;
-  updatedBy?: string;
-}
-
-export interface QueuedTopicCompletion {
+export interface QueuedTopicResult {
   queueId: string;
-  uid: string;
+  name: string;
+  section: string;
   topicId: TopicId;
-  scorePercent: number;
+  topic: string;
+  score: number;
   correctCount: number;
   totalQuestions: number;
-  queuedAtIso: string;
-}
-
-export interface SectionPolicySettings {
-  passingScore: number;
-  waitingTimeHours: number;
-  inactivityDays: number;
-  cooldownMinutes: number;
-  sessionExpiryDays: number;
-  syncedAt?: string;
+  passed: 'yes' | 'no';
+  date: string;
+  time: string;
+  dateTime: string;
+  retryCount: number;
+  nextRetryAtMs: number;
 }
 
 export interface UserSettings {

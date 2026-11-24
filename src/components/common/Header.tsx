@@ -1,22 +1,19 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { PWAInstallButton } from './PWAInstallButton';
 import { OfflineIndicator } from './OfflineIndicator';
 import {
   Settings as SettingsIcon,
   Award,
   Atom,
-  LogIn,
-  LogOut,
-  ShieldCheck,
-  AlertCircle,
+  User,
   X,
   Home,
-  GraduationCap,
-  Clock,
   RefreshCw,
+  Check,
+  AlertCircle,
 } from 'lucide-react';
 import { useProgress } from '../../context/ProgressContext';
-import { useAuth } from '../../context/AuthContext';
+import { useStudent } from '../../context/StudentContext';
 import { isOfflineFileCopy } from '../../config/appInfo';
 import {
   applyPwaUpdate,
@@ -27,51 +24,80 @@ import {
 interface HeaderProps {
   onOpenSettings: () => void;
   onNavigateHome: () => void;
-  onNavigateTeacher: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   onNavigateHome,
-  onNavigateTeacher,
 }) => {
-  const { badges, queuedCompletions } = useProgress();
   const {
-    firebaseUser,
-    studentProfile,
-    isTeacher,
-    authError,
-    openSignInModal,
-    signOut,
-    clearAuthError,
-  } = useAuth();
+    badges,
+    queuedResults,
+    isFlushingQueue,
+    sheetsConfigured,
+    flushResultsQueueNow,
+  } = useProgress();
+  const { studentIdentity, openIdentityModal } = useStudent();
   const { updateAvailable } = usePwaStatus();
   const offlineCopy = isOfflineFileCopy();
   const unlockedBadgesCount = badges.filter((b) => b.unlocked).length;
 
-  const userDisplayLabel = isTeacher
-    ? `Teacher: ${firebaseUser?.displayName || firebaseUser?.email || 'Verified'}`
-    : studentProfile
-      ? `${studentProfile.displayName} (${studentProfile.section})`
-      : firebaseUser?.isAnonymous
-        ? 'Guest'
-        : firebaseUser?.displayName || firebaseUser?.email || 'Student';
+  const [syncNotice, setSyncNotice] = useState<{
+    type: 'ok' | 'warn';
+    text: string;
+  } | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleManualSync = async () => {
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = null;
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setSyncNotice({
+        type: 'warn',
+        text: 'Offline — saved locally; will sync automatically when connected.',
+      });
+      noticeTimerRef.current = window.setTimeout(() => setSyncNotice(null), 4500);
+      return;
+    }
+
+    const outcome = await flushResultsQueueNow(true);
+    setSyncNotice({
+      type: outcome.ok ? 'ok' : 'warn',
+      text: outcome.message,
+    });
+    noticeTimerRef.current = window.setTimeout(() => setSyncNotice(null), 4500);
+  };
+
+  const studentLabel = studentIdentity
+    ? `${studentIdentity.fullName} (${studentIdentity.section})`
+    : 'Set Name & Section';
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-[#dbe9f4] bg-[#ffffff]/95 backdrop-blur-md shadow-[0_2px_12px_-4px_rgba(31,58,86,0.08)]">
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-3">
+      <div className="max-w-7xl mx-auto px-2.5 sm:px-6 h-16 flex items-center justify-between gap-1.5 sm:gap-3">
         {/* Brand Title + Home */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <button
             type="button"
             onClick={onNavigateHome}
-            className="flex items-center gap-2 sm:gap-2.5 text-left group cursor-pointer focus:outline-none shrink-0"
-            aria-label="Go to I-LAB start screen"
+            className="flex items-center gap-1.5 sm:gap-2.5 text-left group cursor-pointer focus:outline-none shrink-0"
+            aria-label="Go to I-LAB home"
           >
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-[#0284c7] to-[#2563eb] flex items-center justify-center text-white shadow-md shadow-sky-500/20 group-hover:scale-105 transition-transform shrink-0">
-              <Atom className="w-5 h-5 sm:w-6 sm:h-6 animate-spin-slow" />
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-[#0284c7] to-[#2563eb] flex items-center justify-center text-white shadow-md shadow-sky-500/20 group-hover:scale-105 transition-transform shrink-0">
+              <Atom className="w-4.5 h-4.5 sm:w-6 sm:h-6 animate-spin-slow" />
             </div>
-            <span className="font-display text-lg font-bold tracking-tight text-[#1f3a56] block leading-none whitespace-nowrap">
+            <span className="font-display text-base sm:text-lg font-bold tracking-tight text-[#1f3a56] block leading-none whitespace-nowrap">
               I-LAB
             </span>
           </button>
@@ -79,9 +105,9 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={onNavigateHome}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#f4f9fe] hover:bg-[#e8f3fd] border border-[#dbe9f4] text-[#1f3a56] text-xs font-bold transition cursor-pointer whitespace-nowrap"
-            aria-label="Return to Start Screen"
-            title="Start Screen"
+            className="inline-flex items-center gap-1 p-2 sm:px-2.5 sm:py-1.5 rounded-xl bg-[#f4f9fe] hover:bg-[#e8f3fd] border border-[#dbe9f4] text-[#1f3a56] text-xs font-bold transition cursor-pointer whitespace-nowrap"
+            aria-label="Return to Compound Library"
+            title="Home"
           >
             <Home className="w-3.5 h-3.5 text-[#0284c7]" />
             <span className="hidden sm:inline">Home</span>
@@ -89,13 +115,48 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Right Action Controls */}
-        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+        <div className="flex items-center gap-1 sm:gap-2 min-w-0">
           <OfflineIndicator />
           <PWAInstallButton />
 
+          {/* Manual Sync Button */}
+          <button
+            type="button"
+            data-testid="header-sync-btn"
+            onClick={() => void handleManualSync()}
+            disabled={isFlushingQueue}
+            title={
+              sheetsConfigured
+                ? queuedResults.length > 0
+                  ? `Sync ${queuedResults.length} queued score(s) to Google Sheets`
+                  : 'Check connection and sync saved results'
+                : 'Google Sheets sync is not configured yet'
+            }
+            className={`inline-flex items-center gap-1.5 p-2 sm:px-2.5 sm:py-1.5 rounded-xl border text-xs font-bold transition cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-60 ${
+              queuedResults.length > 0
+                ? 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-900'
+                : 'bg-[#f4f9fe] hover:bg-[#e8f3fd] border-[#dbe9f4] text-[#1f3a56]'
+            }`}
+            aria-label="Sync results"
+          >
+            <RefreshCw
+              className={`w-3.5 h-3.5 text-[#0284c7] shrink-0 ${
+                isFlushingQueue ? 'animate-spin' : ''
+              }`}
+            />
+            <span className="hidden sm:inline">
+              {isFlushingQueue ? 'Syncing' : 'Sync'}
+            </span>
+            {queuedResults.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-md bg-amber-200 text-amber-950 text-[10px] font-extrabold">
+                {queuedResults.length}
+              </span>
+            )}
+          </button>
+
           {/* Badges counter */}
           <div
-            className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#f4f9fe] text-xs font-semibold text-[#1f3a56] border border-[#dbe9f4] whitespace-nowrap"
+            className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#f4f9fe] text-xs font-semibold text-[#1f3a56] border border-[#dbe9f4] whitespace-nowrap shrink-0"
             title={`${unlockedBadgesCount} of ${badges.length} badges unlocked`}
           >
             <Award className="w-3.5 h-3.5 text-amber-600" />
@@ -104,79 +165,58 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </div>
 
-          {isTeacher && (
-            <button
-              type="button"
-              onClick={onNavigateTeacher}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#0284c7] hover:bg-[#0369a1] text-white text-xs font-bold shadow-xs transition cursor-pointer whitespace-nowrap"
-            >
-              <GraduationCap className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Teacher</span>
-            </button>
-          )}
-
-          {/* Account Pill */}
-          {firebaseUser ? (
-            <div
-              data-guide-id="header-signin"
-              className={`flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-xl border ${
-                studentProfile && !studentProfile.approved && !isTeacher
-                  ? 'bg-amber-50 border-amber-200'
-                  : 'bg-[#f4f9fe] border-[#dbe9f4]'
-              }`}
-            >
-              {studentProfile && !studentProfile.approved && !isTeacher ? (
-                <Clock className="w-3.5 h-3.5 text-amber-700 shrink-0" aria-hidden="true" />
-              ) : (
-                <ShieldCheck className="w-3.5 h-3.5 text-[#0284c7] shrink-0" aria-hidden="true" />
-              )}
-              <span
-                className="hidden sm:inline text-xs font-bold text-[#1f3a56] max-w-[150px] truncate whitespace-nowrap"
-                title={userDisplayLabel}
-              >
-                {userDisplayLabel}
-              </span>
-              {queuedCompletions.length > 0 && (
-                <span className="px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-900 text-[10px] font-bold">
-                  {queuedCompletions.length} queued
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={() => void signOut()}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[#ffffff] hover:bg-rose-50 text-[#1f3a56] hover:text-rose-800 border border-[#dbe9f4] text-[11px] font-bold transition cursor-pointer"
-                aria-label="Sign out"
-                title="Sign Out"
-              >
-                <LogOut className="w-3 h-3" />
-                <span className="hidden lg:inline">Sign Out</span>
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              data-guide-id="header-signin"
-              onClick={() => openSignInModal({ mode: 'student' })}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#0284c7] to-[#2563eb] hover:from-[#0369a1] hover:to-[#1d4ed8] text-white text-xs font-bold shadow-sm transition cursor-pointer whitespace-nowrap"
-              aria-label="Sign in"
-            >
-              <LogIn className="w-3.5 h-3.5 shrink-0" />
-              <span>Sign In</span>
-            </button>
-          )}
+          {/* Student Name & Section Pill */}
+          <button
+            type="button"
+            data-guide-id="header-signin"
+            data-testid="header-student-btn"
+            onClick={openIdentityModal}
+            className="inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-xl bg-[#f4f9fe] hover:bg-[#e8f3fd] border border-[#dbe9f4] text-xs font-bold text-[#1f3a56] transition cursor-pointer whitespace-nowrap max-w-[100px] sm:max-w-[200px] min-w-0"
+            title={studentIdentity ? `Student: ${studentLabel} (click to edit)` : 'Enter your name and section'}
+          >
+            <User className="w-3.5 h-3.5 text-[#0284c7] shrink-0" />
+            <span className="truncate">{studentLabel}</span>
+          </button>
 
           {/* Settings Button */}
           <button
             type="button"
             onClick={onOpenSettings}
-            className="p-2 rounded-xl text-[#1f3a56] hover:text-[#0284c7] bg-[#f4f9fe] hover:bg-[#e8f3fd] border border-[#dbe9f4] transition cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-xl text-[#1f3a56] hover:text-[#0284c7] bg-[#f4f9fe] hover:bg-[#e8f3fd] border border-[#dbe9f4] transition cursor-pointer shrink-0"
             aria-label="Open customization settings"
             title="Settings & Appearance"
           >
-            <SettingsIcon className="w-5 h-5" />
+            <SettingsIcon className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
           </button>
         </div>
       </div>
+
+      {/* Sync Result Feedback Bar */}
+      {syncNotice && (
+        <div
+          role="status"
+          className={`text-xs py-1.5 px-4 flex items-center justify-center gap-2 border-t ${
+            syncNotice.type === 'ok'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : 'bg-amber-50 border-amber-200 text-amber-900'
+          }`}
+        >
+          {syncNotice.type === 'ok' ? (
+            <Check className="w-3.5 h-3.5 shrink-0 text-emerald-700" />
+          ) : (
+            <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-700" />
+          )}
+          <span className="font-medium">{syncNotice.text}</span>
+          <button
+            type="button"
+            onClick={() => setSyncNotice(null)}
+            className="p-0.5 rounded hover:bg-black/5 cursor-pointer"
+            aria-label="Dismiss sync notice"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* PWA Update Available Banner */}
       {!offlineCopy && updateAvailable && (
@@ -197,22 +237,6 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={dismissPwaUpdateBanner}
             className="p-0.5 rounded hover:bg-white/20 cursor-pointer"
             aria-label="Dismiss update banner"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* Auth Error Banner */}
-      {authError && !firebaseUser && (
-        <div className="bg-rose-600 text-white text-xs py-1.5 px-4 flex items-center justify-center gap-2">
-          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-          <span>{authError}</span>
-          <button
-            type="button"
-            onClick={clearAuthError}
-            className="p-0.5 rounded hover:bg-white/20 cursor-pointer"
-            aria-label="Dismiss sign-in notice"
           >
             <X className="w-3.5 h-3.5" />
           </button>

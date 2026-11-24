@@ -9,7 +9,6 @@ export const VALID_TABS: NavTab[] = [
   'converter',
   'periodic-table',
   'practice',
-  'teacher',
 ];
 
 export function shouldUseHashRouting(

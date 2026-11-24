@@ -3,8 +3,6 @@ import {
   Atom,
   BookOpen,
   CheckCircle2,
-  Clock,
-  GraduationCap,
   HelpCircle,
   Play,
   Settings,
@@ -12,7 +10,7 @@ import {
   UserCheck,
   X,
 } from 'lucide-react';
-import { useAuth } from '../../context/AuthContext';
+import { useStudent } from '../../context/StudentContext';
 import { useProgress } from '../../context/ProgressContext';
 import { TOPICS } from '../../data/topics';
 
@@ -20,16 +18,14 @@ interface StartScreenProps {
   onStartTopics: () => void;
   onOpenLibrary: () => void;
   onOpenSettings: () => void;
-  onOpenTeacher: () => void;
 }
 
 export const StartScreen: React.FC<StartScreenProps> = ({
   onStartTopics,
   onOpenLibrary,
   onOpenSettings,
-  onOpenTeacher,
 }) => {
-  const { firebaseUser, studentProfile, isTeacher, openSignInModal } = useAuth();
+  const { studentIdentity, openIdentityModal } = useStudent();
   const { getTopicAccess } = useProgress();
   const [howToPlayOpen, setHowToPlayOpen] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
@@ -71,13 +67,9 @@ export const StartScreen: React.FC<StartScreenProps> = ({
       return access.unlocked && !access.passed;
     }) || TOPICS[0];
 
-  const statusLabel = isTeacher
-    ? `Teacher: ${firebaseUser?.displayName || firebaseUser?.email || 'Verified'}`
-    : studentProfile
-      ? `${studentProfile.displayName} (${studentProfile.section})`
-      : firebaseUser?.isAnonymous
-        ? 'Guest'
-        : 'Guest Mode';
+  const statusLabel = studentIdentity
+    ? `${studentIdentity.fullName} (${studentIdentity.section})`
+    : 'Student Details Not Set';
 
   return (
     <div
@@ -207,29 +199,16 @@ export const StartScreen: React.FC<StartScreenProps> = ({
         </div>
       </div>
 
-      {/* Top Subtle User Status Bar (No Sync / Online / Technical Clutter) */}
+      {/* Top Subtle User Status Bar */}
       <div className="relative z-10 w-full max-w-5xl mx-auto px-4 pt-4 flex flex-wrap items-center justify-between gap-2">
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-2xl bg-[#ffffff]/95 border border-[#dbe9f4] shadow-xs text-xs font-semibold text-[#1f3a56]">
+        <button
+          type="button"
+          onClick={openIdentityModal}
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-2xl bg-[#ffffff]/95 hover:bg-[#f4f9fe] border border-[#dbe9f4] shadow-xs text-xs font-semibold text-[#1f3a56] cursor-pointer"
+        >
           <UserCheck className="w-3.5 h-3.5 text-[#0284c7] shrink-0" />
-          <span>Signed in as {statusLabel}</span>
-          {studentProfile && !studentProfile.approved && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-bold">
-              <Clock className="w-3 h-3" />
-              Waiting for teacher approval
-            </span>
-          )}
-        </div>
-
-        {!firebaseUser && (
-          <button
-            type="button"
-            onClick={() => openSignInModal({ mode: 'student' })}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-2xl bg-[#ffffff] hover:bg-[#f4f9fe] border border-[#dbe9f4] text-xs font-bold text-[#1f3a56] transition cursor-pointer shadow-xs"
-          >
-            <GraduationCap className="w-3.5 h-3.5 text-[#0284c7]" />
-            <span>Student Sign In</span>
-          </button>
-        )}
+          <span>{statusLabel}</span>
+        </button>
       </div>
 
       {/* Center Interactive Whiteboard */}
@@ -319,15 +298,6 @@ export const StartScreen: React.FC<StartScreenProps> = ({
                   <Settings className="w-4 h-4 text-[#0284c7]" />
                   <span>Settings</span>
                 </button>
-
-                <button
-                  type="button"
-                  onClick={onOpenTeacher}
-                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#ffffff] hover:bg-[#f4f9fe] border border-[#dbe9f4] text-[#1f3a56] text-xs font-bold transition cursor-pointer shadow-xs"
-                >
-                  <GraduationCap className="w-4 h-4 text-[#0284c7]" />
-                  <span>{isTeacher ? 'Teacher Dashboard' : 'Teacher Login'}</span>
-                </button>
               </div>
             </div>
 
@@ -383,8 +353,8 @@ export const StartScreen: React.FC<StartScreenProps> = ({
                 },
                 {
                   step: '2',
-                  title: 'Start Right Away — No Sign-In Required',
-                  body: 'Begin Topic 1 (Ionic Compounds) immediately as a guest, or sign in with Google so your teacher can view your progress.',
+                  title: 'Start Right Away — Works Offline',
+                  body: 'Enter your name and section once, then begin Topic 1 (Ionic Compounds) right away with no password or Google sign-in.',
                 },
                 {
                   step: '3',

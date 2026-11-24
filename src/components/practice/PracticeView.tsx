@@ -4,7 +4,7 @@ import { ChemicalElement, Question, TopicId } from '../../types/chemistry';
 import { checkAnswerForgiving } from '../../engine/namingEngine';
 import { useProgress, Badge } from '../../context/ProgressContext';
 import { useSettings } from '../../context/SettingsContext';
-import { useAuth } from '../../context/AuthContext';
+import { useStudent } from '../../context/StudentContext';
 import { useGuide } from '../../context/GuideContext';
 import { FormulaRenderer } from '../common/FormulaRenderer';
 import {
@@ -18,10 +18,8 @@ import {
   Sparkles,
   Trophy,
   Clock,
-  ShieldCheck,
-  LogIn,
+  User,
   RefreshCw,
-  CloudOff,
   AlertTriangle,
   Compass,
 } from 'lucide-react';
@@ -42,18 +40,18 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
   onNavigateToLibrary,
 }) => {
   const {
-    queuedCompletions,
+    queuedResults,
     isFlushingQueue,
     lastSyncError,
+    sheetsConfigured,
     submitTopicAttempt,
-    flushCompletionQueueNow,
+    flushResultsQueueNow,
     isTopicUnlocked,
     getTopicAccess,
-    getTopicRetryStatus,
     badges,
   } = useProgress();
   const { settings } = useSettings();
-  const { firebaseUser, studentProfile, isTeacher, openSignInModal } = useAuth();
+  const { studentIdentity, openIdentityModal } = useStudent();
   const {
     updateAppSnapshot,
     givePracticeHint,
@@ -77,20 +75,19 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
   const [showHint, setShowHint] = useState<boolean>(false);
   const [quizCompleted, setQuizCompleted] = useState<boolean>(false);
   const [submittingScore, setSubmittingScore] = useState<boolean>(false);
-  const [retryWarning, setRetryWarning] = useState<string | null>(null);
   const [quizResult, setQuizResult] = useState<{
     score: number;
     total: number;
     percent: number;
     passed: boolean;
     newBadges: Badge[];
-    status: 'saved' | 'queued' | 'guest-local';
+    status: 'saved' | 'queued' | 'local-only';
     statusMessage?: string;
   } | null>(null);
 
   const completionLockRef = useRef<boolean>(false);
 
-  // Guard active topic against live teacher lock / sign out
+  // Guard active topic if lock status changes
   useEffect(() => {
     if (activeTopicId && !isTopicUnlocked(activeTopicId)) {
       setActiveTopicId(null);
@@ -138,17 +135,9 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
   }, [updateAppSnapshot]);
 
   const startQuiz = (topicId: TopicId) => {
-    setRetryWarning(null);
     const access = getTopicAccess(topicId);
     if (!access.unlocked) {
       announceLockedTopic(access);
-      return;
-    }
-    const retryStatus = getTopicRetryStatus(topicId);
-    if (retryStatus.limitReached) {
-      setRetryWarning(
-        `Daily retry limit reached (${retryStatus.usedToday}/${retryStatus.limit} attempts today). Come back tomorrow or ask your teacher.`
-      );
       return;
     }
 
@@ -263,10 +252,6 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
 
   // Topics Hub
   if (!activeTopic || (!currentQuestion && !quizCompleted)) {
-    const waitingForApproval = Boolean(
-      firebaseUser && !isTeacher && studentProfile && !studentProfile.approved
-    );
-
     return (
       <div className="w-full max-w-4xl mx-auto space-y-5 pb-12 text-[#1f3a56]">
         {/* Hub Header */}
@@ -312,66 +297,58 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
           </div>
         )}
 
-        {retryWarning && (
-          <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold flex items-center gap-2">
-            <Clock className="w-4 h-4 text-amber-700 shrink-0" />
-            <span>{retryWarning}</span>
-          </div>
-        )}
-
-        {/* Approval / Account Status Banner */}
+        {/* Student Details & Sync Status Banner */}
         <div
           data-guide-id="practice-signin"
-          className={`p-4 sm:px-5 rounded-2xl border shadow-[0_4px_16px_-8px_rgba(31,58,86,0.06)] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 ${
-            waitingForApproval
-              ? 'bg-amber-50 border-amber-200 text-amber-950'
-              : 'bg-[#ffffff] border-[#dbe9f4] text-[#1f3a56]'
-          }`}
+          className="p-4 sm:px-5 rounded-2xl border border-[#dbe9f4] bg-[#ffffff] text-[#1f3a56] shadow-[0_4px_16px_-8px_rgba(31,58,86,0.06)] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
         >
           <div className="flex items-start sm:items-center gap-2.5 text-xs sm:text-sm font-medium min-w-0 flex-1">
-            {waitingForApproval ? (
-              <Clock className="w-4 h-4 text-amber-700 shrink-0 mt-0.5 sm:mt-0" />
-            ) : (
-              <ShieldCheck className="w-4 h-4 text-[#0284c7] shrink-0 mt-0.5 sm:mt-0" />
-            )}
+            <User className="w-4 h-4 text-[#0284c7] shrink-0 mt-0.5 sm:mt-0" />
             <span className="leading-relaxed">
-              {isTeacher
-                ? 'Teacher Preview Mode: All 5 topics are open for classroom demonstration.'
-                : waitingForApproval
-                  ? 'Waiting for teacher approval — your progress is saved on this device only until your teacher approves your account.'
-                  : studentProfile?.approved
-                    ? `Signed in as ${studentProfile.displayName} (${studentProfile.section}). Completed topics save automatically.`
-                    : 'Guest mode: your progress is saved on this device only. Sign in so your teacher can see your progress.'}
+              {studentIdentity ? (
+                <>
+                  Student:{' '}
+                  <strong className="text-[#1f3a56]">
+                    {studentIdentity.fullName} ({studentIdentity.section})
+                  </strong>
+                  .{' '}
+                  {sheetsConfigured
+                    ? 'Completed topic scores sync to your class Sheet when online.'
+                    : 'Scores save directly on this device (works offline).'}
+                </>
+              ) : (
+                'Enter your Full Name and Section so completed topic scores are labeled properly.'
+              )}
             </span>
           </div>
 
-          {!firebaseUser ? (
+          <div className="flex flex-wrap items-center gap-2 shrink-0 w-full sm:w-auto">
+            {sheetsConfigured && queuedResults.length > 0 && (
+              <button
+                type="button"
+                onClick={() => void flushResultsQueueNow(true)}
+                disabled={isFlushingQueue}
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm cursor-pointer shrink-0 disabled:opacity-60 flex-1 sm:flex-none"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isFlushingQueue ? 'animate-spin' : ''}`} />
+                <span>
+                  {isFlushingQueue ? 'Syncing...' : `Sync Queued (${queuedResults.length})`}
+                </span>
+              </button>
+            )}
+
             <button
               type="button"
-              onClick={() => openSignInModal({ mode: 'student' })}
-              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#0284c7] hover:bg-[#0369a1] text-white text-xs font-bold shadow-sm cursor-pointer shrink-0 whitespace-nowrap w-full sm:w-auto"
+              onClick={openIdentityModal}
+              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#f4f9fe] hover:bg-[#e8f3fd] border border-[#dbe9f4] text-[#1f3a56] text-xs font-bold cursor-pointer shrink-0 whitespace-nowrap flex-1 sm:flex-none"
             >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>Sign In</span>
+              <User className="w-3.5 h-3.5 text-[#0284c7]" />
+              <span>{studentIdentity ? 'Edit Name / Section' : 'Set Name & Section'}</span>
             </button>
-          ) : queuedCompletions.length > 0 ? (
-            <button
-              type="button"
-              onClick={() => void flushCompletionQueueNow()}
-              disabled={isFlushingQueue}
-              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm cursor-pointer shrink-0 disabled:opacity-60 w-full sm:w-auto"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isFlushingQueue ? 'animate-spin' : ''}`} />
-              <span>
-                {isFlushingQueue
-                  ? 'Uploading...'
-                  : `Upload queued (${queuedCompletions.length})`}
-              </span>
-            </button>
-          ) : null}
+          </div>
         </div>
 
-        {lastSyncError && queuedCompletions.length > 0 && (
+        {lastSyncError && queuedResults.length > 0 && (
           <div className="px-4 py-2.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 shrink-0 text-rose-700" />
             <span>{lastSyncError}</span>
@@ -410,7 +387,6 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
         <div data-guide-id="practice-sets" className="space-y-4">
           {TOPICS.map((topic) => {
             const access = getTopicAccess(topic.id);
-            const retryStatus = getTopicRetryStatus(topic.id);
             const isPassed = access.passed;
             const unlocked = access.unlocked;
 
@@ -453,18 +429,11 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
                     </h3>
                   </div>
 
-                  {(isPassed || (retryStatus.limit > 0 && unlocked)) && (
+                  {isPassed && (
                     <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                      {isPassed && (
-                        <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 whitespace-nowrap">
-                          Passed ({access.bestScore}%)
-                        </span>
-                      )}
-                      {retryStatus.limit > 0 && unlocked && (
-                        <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-[#f4f9fe] text-[#1f3a56] border border-[#dbe9f4] whitespace-nowrap">
-                          Tries today: {retryStatus.usedToday}/{retryStatus.limit}
-                        </span>
-                      )}
+                      <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 whitespace-nowrap">
+                        Passed ({access.bestScore}%)
+                      </span>
                     </div>
                   )}
                 </div>
@@ -475,9 +444,7 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
 
                   {!unlocked && access.lockLabel && (
                     <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-xs font-semibold text-amber-900">
-                      {access.reason === 'awaiting-sync' ? (
-                        <CloudOff className="w-3.5 h-3.5 shrink-0 text-amber-700" />
-                      ) : access.reason === 'wait-next-day' ? (
+                      {access.reason === 'wait-next-day' ? (
                         <Clock className="w-3.5 h-3.5 shrink-0 text-amber-700" />
                       ) : (
                         <Lock className="w-3.5 h-3.5 shrink-0 text-amber-700" />
@@ -492,17 +459,10 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
                   {unlocked ? (
                     <button
                       type="button"
-                      disabled={retryStatus.limitReached}
                       onClick={() => startQuiz(topic.id)}
-                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#0284c7] to-[#2563eb] hover:from-[#0369a1] hover:to-[#1d4ed8] disabled:opacity-55 text-white font-bold text-xs sm:text-sm shadow-sm transition cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap"
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#0284c7] to-[#2563eb] hover:from-[#0369a1] hover:to-[#1d4ed8] text-white font-bold text-xs sm:text-sm shadow-sm transition cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap"
                     >
-                      <span>
-                        {retryStatus.limitReached
-                          ? 'Daily Limit Reached'
-                          : isPassed
-                            ? 'Practice Again'
-                            : 'Start Topic'}
-                      </span>
+                      <span>{isPassed ? 'Practice Again' : 'Start Topic'}</span>
                       <ArrowRight className="w-4 h-4 shrink-0" />
                     </button>
                   ) : (
@@ -566,12 +526,8 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
             {quizResult.passed
               ? activeTopic.id === 'mixed-practice'
                 ? `Awesome work! You passed Mixed Practice with ${quizResult.percent}%!`
-                : quizResult.status === 'guest-local'
-                  ? 'Passed! Your next topic opens tomorrow at 12:00 AM (Asia/Manila). Saved on this device only.'
-                  : quizResult.status === 'queued'
-                    ? quizResult.statusMessage
-                    : 'Recorded! Your next topic unlocks tomorrow at 12:00 AM (Asia/Manila).'
-              : `You scored ${quizResult.percent}%. Score at least ${activeTopic.passingScore}% to unlock the next topic.`}
+                : 'Passed! Your next topic unlocks tomorrow at 12:00 AM.'
+              : `You scored ${quizResult.percent}%. Score at least ${activeTopic.passingScore}% to pass and unlock the next topic.`}
           </p>
         </div>
 
@@ -589,9 +545,17 @@ export const PracticeView: React.FC<PracticeViewProps> = ({
           </div>
         </div>
 
-        {quizResult.status === 'guest-local' && (
-          <div className="p-3 rounded-xl bg-[#f4f9fe] border border-[#dbe9f4] text-xs font-medium text-[#3b5775]">
-            Guest mode: your progress is saved on this device only. Sign in so your teacher can see your progress.
+        {quizResult.statusMessage && (
+          <div
+            className={`p-3 rounded-xl border text-xs font-medium ${
+              quizResult.status === 'saved'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                : quizResult.status === 'queued'
+                  ? 'bg-amber-50 border-amber-200 text-amber-900'
+                  : 'bg-[#f4f9fe] border-[#dbe9f4] text-[#3b5775]'
+            }`}
+          >
+            {quizResult.statusMessage}
           </div>
         )}
 

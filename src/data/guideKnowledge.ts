@@ -471,7 +471,7 @@ export function getTourSteps(tourId: TourId, currentLibraryId: string): TourStep
           id: 'pr-1',
           title: 'Practice Topics & Mastery Unlocks',
           speechText:
-            'Practice covers five progressive topics from Ionic Compounds to Mixed Practice. Topic 1 is always open for guest practice.',
+            'Practice covers five progressive topics from Ionic Compounds to Mixed Practice. Topic 1 is always open.',
           highlightTarget: 'practice-header',
           targetTab: 'practice',
         },
@@ -479,7 +479,7 @@ export function getTourSteps(tourId: TourId, currentLibraryId: string): TourStep
           id: 'pr-2',
           title: 'How Unlocking Works',
           speechText:
-            'Sign in with Google, wait for your teacher to approve your account, score at least 75 percent, and come back on the next day after midnight to unlock the next topic.',
+            'Score at least 75 percent on a topic and come back after 12:00 AM the next day to unlock the next topic.',
           highlightTarget: 'practice-sets',
           targetTab: 'practice',
         },
@@ -487,7 +487,7 @@ export function getTourSteps(tourId: TourId, currentLibraryId: string): TourStep
           id: 'pr-3',
           title: 'Hints & Badges',
           speechText:
-            'Tap Need a hint during questions for rule-based coaching without giving away the answer, and collect badges as you pass.',
+            'Tap Hint during questions for rule-based coaching without giving away the answer, and collect badges as you pass.',
           highlightTarget: 'practice-badges',
           targetTab: 'practice',
         },
@@ -497,16 +497,16 @@ export function getTourSteps(tourId: TourId, currentLibraryId: string): TourStep
       return [
         {
           id: 'si-1',
-          title: 'Signing In & Teacher Approval',
+          title: 'Student Name & Section',
           speechText:
-            'Sign in with your Google account or continue as a guest. After first sign-in, enter your name and section so your teacher can approve your account and unlock monitored topics.',
+            'Enter your Full Name and Section when starting so completed topic scores stay organized on your device.',
           highlightTarget: 'header-signin',
         },
         {
           id: 'si-2',
-          title: 'Monitored Score Saving',
+          title: 'Offline Saving & Sheet Sync',
           speechText:
-            'Approved students save every score automatically to their class record. If you finish while offline, your attempt is queued locally until connection returns.',
+            'Scores are saved automatically when you finish a topic. If you finish while offline, results wait in a local queue and sync when you reconnect.',
           highlightTarget: 'practice-signin',
           targetTab: 'practice',
         },
@@ -526,7 +526,7 @@ export function getTourSteps(tourId: TourId, currentLibraryId: string): TourStep
           id: 'st-2',
           title: 'Guide Calibration & Offline Copy',
           speechText:
-            'Use Calibrate Guide to align mouth and eye animation, open the Teacher Login when needed, or download the single-file offline copy.',
+            'Use Calibrate Guide to align mouth and eye animation, test Google Sheets sync, or download the single-file offline copy.',
           highlightTarget: 'settings-guide',
         },
       ];

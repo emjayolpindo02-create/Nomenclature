@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { LIBRARY_RULES } from '../../data/libraryRules';
-import { useAuth } from '../../context/AuthContext';
 import {
   BookOpen,
   Stethoscope,
@@ -13,7 +12,6 @@ import {
   Layers,
   ArrowLeftRight,
   Calculator,
-  GraduationCap,
 } from 'lucide-react';
 
 export type NavTab =
@@ -24,8 +22,7 @@ export type NavTab =
   | 'flashcards'
   | 'converter'
   | 'periodic-table'
-  | 'practice'
-  | 'teacher';
+  | 'practice';
 
 interface NavigationProps {
   currentTab: NavTab;
@@ -43,7 +40,6 @@ export const Navigation: React.FC<NavigationProps> = ({
   const [libraryMenuOpen, setLibraryMenuOpen] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { isTeacher } = useAuth();
 
   const activeRule = LIBRARY_RULES.find((r) => r.id === currentLibraryId) || LIBRARY_RULES[0];
 
@@ -251,25 +247,6 @@ export const Navigation: React.FC<NavigationProps> = ({
               <Grid className="w-3.5 h-3.5" />
               <span>Periodic Table</span>
             </button>
-
-            {isTeacher && (
-              <button
-                type="button"
-                onClick={() => {
-                  onSelectTab('teacher');
-                  setLibraryMenuOpen(false);
-                  setToolsMenuOpen(false);
-                }}
-                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer text-xs font-semibold whitespace-nowrap shrink-0 ${
-                  currentTab === 'teacher'
-                    ? 'bg-[#0284c7] text-white shadow-xs'
-                    : 'text-[#1f3a56] hover:bg-[#eef5fc]'
-                }`}
-              >
-                <GraduationCap className="w-3.5 h-3.5" />
-                <span>Teacher</span>
-              </button>
-            )}
           </div>
 
           {/* Current view breadcrumb */}
@@ -286,7 +263,6 @@ export const Navigation: React.FC<NavigationProps> = ({
             {currentTab === 'converter' && <span>Name ↔ Formula Converter</span>}
             {currentTab === 'periodic-table' && <span>Periodic Table (118 Elements)</span>}
             {currentTab === 'practice' && <span>Topics &amp; Practice</span>}
-            {currentTab === 'teacher' && <span>Teacher Dashboard</span>}
           </div>
         </div>
 
@@ -301,9 +277,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   ? 'Doctor Nomen'
                   : currentTab === 'practice'
                     ? 'Topics'
-                    : currentTab === 'teacher'
-                      ? 'Teacher Dashboard'
-                      : currentTab}
+                    : currentTab}
             </span>
           </div>
 
@@ -390,17 +364,6 @@ export const Navigation: React.FC<NavigationProps> = ({
                 </button>
               </div>
             </div>
-
-            {isTeacher && (
-              <button
-                type="button"
-                onClick={() => handleToolClick('teacher')}
-                className="w-full p-2.5 rounded-xl text-left text-xs font-bold bg-[#0284c7] text-white flex items-center gap-2"
-              >
-                <GraduationCap className="w-4 h-4" />
-                <span>Teacher Dashboard</span>
-              </button>
-            )}
 
             <div className="space-y-1">
               <span className="text-[11px] font-bold text-[#3b5775] uppercase tracking-wider px-2">
